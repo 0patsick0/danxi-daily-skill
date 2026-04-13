@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+from .security import sanitize_url_for_log
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            f"redirect blocked: {newurl}",
+            headers,
+            fp,
+        )
+
+
+_SAFE_OPENER = urllib.request.build_opener(_NoRedirect())
+
+
+def _headers(token: str | None) -> dict[str, str]:
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "danxi-daily-skill/1.0",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _request_json(url: str, params: dict[str, Any], token: str | None, timeout: int) -> Any:
+    encoded = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    full_url = f"{url}?{encoded}" if encoded else url
+    req = urllib.request.Request(full_url, method="GET", headers=_headers(token))
+    with _SAFE_OPENER.open(req, timeout=timeout) as resp:
+        payload = resp.read().decode("utf-8")
+    return json.loads(payload)
+
+
+def _extract_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            return [x for x in data if isinstance(x, dict)]
+    raise ValueError("API payload is not a hole list")
+
+
+def fetch_holes_with_fallback(
+    base_urls: list[str],
+    start_time: str,
+    limit: int,
+    division_id: int | None,
+    token: str | None,
+    timeout: int = 15,
+) -> tuple[list[dict[str, Any]], str]:
+    errors: list[str] = []
+    for base in base_urls:
+        clean_base = base.rstrip("/")
+        url = f"{clean_base}/holes"
+        params = {
+            "start_time": start_time,
+            "length": limit,
+            "division_id": division_id,
+        }
+        try:
+            payload = _request_json(url, params=params, token=token, timeout=timeout)
+            items = _extract_items(payload)
+            return items, clean_base
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"{sanitize_url_for_log(clean_base)}: {exc}")
+    raise RuntimeError("; ".join(errors) if errors else "all endpoints failed")
+
+
+def fetch_hole_floors(
+    base_url: str,
+    hole_id: int,
+    token: str | None,
+    size: int = 40,
+    timeout: int = 15,
+) -> list[dict[str, Any]]:
+    clean_base = base_url.rstrip("/")
+    params = {"offset": 0, "size": size}
+    url = f"{clean_base}/holes/{hole_id}/floors"
+    try:
+        payload = _request_json(url, params=params, token=token, timeout=timeout)
+        return _extract_items(payload)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
+        return []

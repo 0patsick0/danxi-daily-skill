@@ -1,0 +1,1 @@
+# stdlib-only runtime; no external dependency required
