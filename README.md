@@ -2,6 +2,27 @@
 
 A production-ready Skill project for generating DanXi daily reports.
 
+## Install To Claude (1 minute)
+
+### Option A: Git clone (recommended)
+
+Windows (PowerShell):
+
+git clone https://github.com/0patsick0/danxi-daily-skill.git "$HOME/.claude/skills/danxi-daily"
+
+macOS/Linux:
+
+git clone https://github.com/0patsick0/danxi-daily-skill.git ~/.claude/skills/danxi-daily
+
+### Option B: Download ZIP
+
+1. Download this repository as ZIP.
+2. Extract to:
+  - Windows: %USERPROFILE%/.claude/skills/danxi-daily
+  - macOS/Linux: ~/.claude/skills/danxi-daily
+
+Then restart Claude Code / reopen your session.
+
 ## Features
 
 - Dual endpoint fallback:
@@ -79,16 +100,3 @@ See docs/scheduling.md for:
 ## Tests
 
 python -m unittest discover -s tests -v
-
-## Suggested GitHub Setup
-
-Repository name suggestion: danxi-daily-skill
-
-Example:
-
-git init
-git add .
-git commit -m "feat: initial danxi daily skill"
-git branch -M main
-git remote add origin https://github.com/0patsick0/danxi-daily-skill.git
-git push -u origin main

@@ -207,7 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-markdown", type=Path, default=Path("outputs/daily.md"))
     parser.add_argument("--output-holes", type=Path, default=Path("outputs/holes.raw.json"))
     parser.add_argument("--output-ranked", type=Path, default=Path("outputs/ranked.json"))
-    parser.add_argument("--title-prefix", type=str, default="DanXi Daily")
+    parser.add_argument("--title-prefix", type=str, default="旦夕热榜日报")
     parser.add_argument(
         "--webvpn-mode",
         choices=["auto", "off", "force"],

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+
+_DANXI_STICKER_RE = re.compile(r"!\[[^\]]*\]\(dx_[^)]+\)")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_MULTI_SPACE_RE = re.compile(r"\s+")
 
 
 def utc_now() -> datetime:
@@ -73,3 +79,19 @@ def extract_text_lines(content: str | None) -> list[str]:
             continue
         lines.append(text)
     return lines
+
+
+def clean_publish_text(content: str | None) -> str:
+    if not content:
+        return ""
+
+    # Remove DanXi custom markdown stickers like ![](dx_guilty) that cannot be rendered in WeChat.
+    cleaned = _DANXI_STICKER_RE.sub("", content)
+    cleaned = _MARKDOWN_IMAGE_RE.sub("", cleaned)
+    cleaned = cleaned.replace("\r", "\n")
+    parts = []
+    for raw in cleaned.split("\n"):
+        text = _MULTI_SPACE_RE.sub(" ", raw).strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts).strip()

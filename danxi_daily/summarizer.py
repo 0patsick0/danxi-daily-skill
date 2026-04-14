@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import RankedPost
-from .utils import extract_text_lines
+from .utils import clean_publish_text, extract_text_lines
 
 
 def _load_prompt_template(path: Path) -> str:
@@ -20,11 +20,9 @@ def _load_prompt_template(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _extractive_summary(post: RankedPost, max_chars: int = 120) -> str:
+def _collect_candidate_lines(post: RankedPost, max_lines: int = 8) -> list[str]:
     candidates: list[str] = []
-
-    lines = extract_text_lines(post.excerpt)
-    candidates.extend(lines)
+    candidates.extend(extract_text_lines(clean_publish_text(post.excerpt)))
 
     floors = post.raw.get("floors")
     if not isinstance(floors, dict):
@@ -38,17 +36,58 @@ def _extractive_summary(post: RankedPost, max_chars: int = 120) -> str:
             continue
         text = floor.get("content")
         if isinstance(text, str):
-            candidates.extend(extract_text_lines(text))
-        if len(candidates) >= 2:
+            candidates.extend(extract_text_lines(clean_publish_text(text)))
+        if len(candidates) >= max_lines:
             break
 
-    merged = " ".join(candidates).strip()
-    if not merged:
-        merged = "No content snippet is available for this hole."
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for line in candidates:
+        text = line.strip()
+        if not text or text in seen:
+            continue
+        deduped.append(text)
+        seen.add(text)
+        if len(deduped) >= max_lines:
+            break
+    return deduped
 
-    if len(merged) > max_chars:
-        merged = merged[: max_chars - 3].rstrip() + "..."
-    return f"[fallback] {merged}"
+
+def _extractive_summary(post: RankedPost, max_chars: int = 120) -> str:
+    lines = _collect_candidate_lines(post)
+
+    if not lines:
+        return "该帖信息较少，当前可提炼的核心观点有限。"
+
+    topic = lines[0][:28]
+    detail = ""
+    for line in lines[1:]:
+        if line and line != topic:
+            detail = line[:36]
+            break
+
+    if detail:
+        summary = (
+            f"该帖主要围绕“{topic}”展开，评论中提到“{detail}”等观点。"
+        )
+    else:
+        summary = f"该帖主要围绕“{topic}”展开。"
+
+    if len(summary) > max_chars:
+        summary = summary[: max_chars - 1].rstrip() + "…"
+    return summary
+
+
+def _build_user_input(post: RankedPost) -> str:
+    lines = _collect_candidate_lines(post, max_lines=6)
+    snippet = "；".join(lines[:4]).strip()
+    if not snippet:
+        snippet = "信息较少"
+
+    return (
+        f"Hole ID: {post.hole_id}\n"
+        f"Snippet: {snippet}\n"
+    )
 
 
 def _openai_summary(prompt: str, user_input: str, model: str, api_key: str, timeout: int) -> str:
@@ -135,12 +174,7 @@ def summarize_post(
     timeout: int = 25,
 ) -> str:
     prompt = _load_prompt_template(prompt_path)
-    content = post.excerpt or "No excerpt"
-    user_input = (
-        f"Hole ID: {post.hole_id}\n"
-        f"Stats: views={post.view}, replies={post.reply}, likes={post.like_sum}\n"
-        f"Snippet: {content}\n"
-    )
+    user_input = _build_user_input(post)
 
     normalized = provider.strip().lower()
     if normalized == "auto":
@@ -155,11 +189,15 @@ def summarize_post(
         if normalized == "openai":
             model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             api_key = os.environ["OPENAI_API_KEY"]
-            return _openai_summary(prompt, user_input, model, api_key, timeout)
+            content = _openai_summary(prompt, user_input, model, api_key, timeout)
+            cleaned = clean_publish_text(content)
+            return cleaned or _extractive_summary(post)
         if normalized == "anthropic":
             model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
             api_key = os.environ["ANTHROPIC_API_KEY"]
-            return _anthropic_summary(prompt, user_input, model, api_key, timeout)
+            content = _anthropic_summary(prompt, user_input, model, api_key, timeout)
+            cleaned = clean_publish_text(content)
+            return cleaned or _extractive_summary(post)
     except (
         KeyError,
         urllib.error.URLError,

@@ -3,45 +3,57 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .models import RankedPost
+from .utils import clean_publish_text
 
 
-def build_daily_markdown(posts: list[RankedPost], title_prefix: str = "DanXi Daily") -> str:
+def build_daily_markdown(
+    posts: list[RankedPost],
+    title_prefix: str = "旦夕热榜日报",
+    github_repo: str = "https://github.com/0patsick0/danxi-daily-skill",
+) -> str:
     now = datetime.now(timezone.utc)
-    date_label = now.strftime("%Y-%m-%d")
+    date_label = now.astimezone().strftime("%Y年%m月%d日")
+    time_label = now.astimezone().strftime("%Y-%m-%d %H:%M")
     lines: list[str] = [
-        f"# {title_prefix} | {date_label}",
+        f"# 🌟 {title_prefix}｜{date_label}",
         "",
-        f"Generated at: {now.isoformat().replace('+00:00', 'Z')}",
+        f"> 🕒 数据整理时间：{time_label}",
         "",
-        "## Hot Posts",
+        "## 🔥 今日热门话题",
         "",
     ]
 
     if not posts:
         lines.extend([
-            "No posts were fetched in this run.",
+            "今天暂未抓取到符合条件的热点讨论，建议稍后再看。",
             "",
-            "## Notes",
-            "- Check API token or endpoint availability.",
+            "## 📮 结语",
+            "欢迎持续关注，我们会在下一次推送里带来新的校园热点。",
+            "",
+            f"🔗 开源仓库：{github_repo}",
         ])
         return "\n".join(lines) + "\n"
 
     for idx, post in enumerate(posts, start=1):
+        summary = clean_publish_text(post.summary) or "暂无"
+        excerpt = clean_publish_text(post.excerpt) or "暂无"
         lines.extend(
             [
-                f"### {idx}. Hole #{post.hole_id}",
-                f"- Hot score: {post.hot_score:.3f}",
-                f"- Metrics: views={post.view}, replies={post.reply}, likes={post.like_sum}",
-                f"- Excerpt: {post.excerpt or 'N/A'}",
-                f"- Summary: {post.summary or 'N/A'}",
+                f"### {idx}. 📍 热门洞 #{post.hole_id}",
+                f"- 🔥 热度指数：{post.hot_score:.3f}",
+                f"- 👀 浏览：{post.view} ｜ 💬 回复：{post.reply} ｜ 👍 点赞：{post.like_sum}",
+                f"- 🧠 话题解读：{summary}",
+                f"- 📝 原文节选：{excerpt}",
                 "",
             ]
         )
 
     lines.extend(
         [
-            "## Disclaimer",
-            "- This report is generated automatically and should be reviewed before posting.",
+            "## 📮 结语",
+            "以上就是今天的旦夕热点，欢迎在评论区分享你的看法。",
+            "",
+            f"🔗 开源仓库：{github_repo}",
         ]
     )
 

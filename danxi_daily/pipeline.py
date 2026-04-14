@@ -33,7 +33,7 @@ class PipelineConfig:
     llm_provider: str = "auto"
     timeout: int = 15
     floor_enrich_size: int = 40
-    title_prefix: str = "DanXi Daily"
+    title_prefix: str = "旦夕热榜日报"
     post: bool = False
     post_endpoint: str | None = None
     post_token: str | None = None
