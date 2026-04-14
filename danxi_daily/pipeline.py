@@ -22,7 +22,7 @@ from .webvpn import WebVPNClient
 class PipelineConfig:
     base_urls: list[str]
     hours: int = 24
-    fetch_limit: int = 120
+    fetch_limit: int = 10
     top_n: int = 12
     division_id: int | None = None
     prompt_path: Path = Path("prompts/summarize.md")
@@ -77,6 +77,7 @@ def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]],
     merged: dict[int, dict[str, Any]] = {}
     endpoint = config.base_urls[0].rstrip("/")
     errors: list[str] = []
+    effective_fetch_limit = min(10, max(1, config.fetch_limit))
 
     for hours in _window_hours(config.hours):
         start_time = iso_utc_hours_ago(hours)
@@ -84,7 +85,7 @@ def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]],
             holes, used_endpoint = fetch_holes_with_fallback(
                 base_urls=config.base_urls,
                 start_time=start_time,
-                limit=config.fetch_limit,
+                limit=effective_fetch_limit,
                 division_id=config.division_id,
                 token=config.api_token,
                 timeout=config.timeout,

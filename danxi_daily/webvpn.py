@@ -28,6 +28,7 @@ WEBVPN_DO_LOGIN_URL = f"https://{WEBVPN_HOST}/do-login"
 _WEBVPN_KEY = "wrdvpnisthebest!"
 _ID_HOST = "id.fudan.edu.cn"
 _AUTH_HOST = "auth.fduhole.com"
+_SAFE_REDIRECT_HOSTS = {WEBVPN_HOST, _ID_HOST, _AUTH_HOST}
 
 
 class WebVPNError(RuntimeError):
@@ -41,6 +42,11 @@ class WebVPNAuthError(WebVPNError):
 class _PreserveMethodRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
         if code in {307, 308}:
+            old_host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
+            new_host = (urllib.parse.urlparse(newurl).hostname or "").lower()
+            # Reject cross-domain credential forwarding to untrusted targets.
+            if (not new_host) or (new_host not in _SAFE_REDIRECT_HOSTS) or (old_host and old_host not in _SAFE_REDIRECT_HOSTS):
+                raise WebVPNAuthError("unsafe redirect target for credentialed POST request")
             return urllib.request.Request(
                 newurl,
                 data=req.data,

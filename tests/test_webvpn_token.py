@@ -4,8 +4,9 @@ import io
 import json
 import unittest
 import urllib.error
+import urllib.request
 
-from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError
+from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, _PreserveMethodRedirectHandler
 
 
 def _http_error(code: int, body: dict[str, str]) -> urllib.error.HTTPError:
@@ -19,6 +20,38 @@ def _http_error(code: int, body: dict[str, str]) -> urllib.error.HTTPError:
 
 
 class WebvpnTokenTests(unittest.TestCase):
+    def test_preserve_redirect_blocks_untrusted_host(self) -> None:
+        handler = _PreserveMethodRedirectHandler()
+        req = urllib.request.Request(
+            "https://webvpn.fudan.edu.cn/mock",
+            data=b"email=a&password=b",
+            method="POST",
+        )
+
+        with self.assertRaises(WebVPNAuthError):
+            handler.redirect_request(req, fp=None, code=307, msg="", headers={}, newurl="https://evil.example/steal")
+
+    def test_preserve_redirect_allows_trusted_host(self) -> None:
+        handler = _PreserveMethodRedirectHandler()
+        req = urllib.request.Request(
+            "https://webvpn.fudan.edu.cn/mock",
+            data=b"email=a&password=b",
+            method="POST",
+        )
+
+        redirected = handler.redirect_request(
+            req,
+            fp=None,
+            code=307,
+            msg="",
+            headers={},
+            newurl="https://webvpn.fudan.edu.cn/next",
+        )
+
+        self.assertIsNotNone(redirected)
+        assert redirected is not None
+        self.assertEqual(redirected.get_full_url(), "https://webvpn.fudan.edu.cn/next")
+
     def test_candidate_email_variants(self) -> None:
         client = WebVPNClient(WebVPNCredentials(username="24307100036", password="x"), allowed_hosts={"forum.fduhole.com"})
         self.assertEqual(
