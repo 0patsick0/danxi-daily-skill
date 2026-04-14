@@ -1,1 +1,1 @@
-# stdlib-only runtime; no external dependency required
+pycryptodome>=3.20.0

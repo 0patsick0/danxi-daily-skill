@@ -7,7 +7,9 @@ A production-ready Skill project for generating DanXi daily reports.
 - Dual endpoint fallback:
   - https://forum.fduhole.com/api
   - https://api.fduhole.com
-- Hotness ranking with deterministic tie-breakers.
+- Multi-window hotspot sampling across recent 24h slices (1/2/4/8/12/24h), then dedupe.
+- Hotness ranking focused on view/reply signals with deterministic tie-breakers.
+- Invalid-discussion filtering for low-value threads (e.g., 收资料/出资料/代课).
 - LLM summarization (OpenAI or Anthropic) with extractive fallback.
 - Markdown output for human review before posting.
 - Optional posting mode with explicit --post switch.
@@ -19,6 +21,8 @@ A production-ready Skill project for generating DanXi daily reports.
 3. Run:
 
 python scripts/generate_daily.py --hours 24 --top 12
+
+Note: current forum API limits `length` to 10 per request. The CLI clamps `--fetch-limit` to 10 automatically.
 
 Generated files:
 - outputs/daily.md
@@ -47,9 +51,23 @@ Security defaults:
 - Read/post endpoint hosts must be in allowlists.
 - Tokens are read from environment variables only (no CLI token arguments).
 
+WebVPN fallback:
+- Default mode is `auto`: direct first, then WebVPN fallback on connection failures.
+- First interactive run can prompt for WebVPN student credentials and persist to `.env`.
+- If `DANXI_API_TOKEN` is empty, the tool will try to exchange WebVPN credentials for a forum API token automatically.
+- Set `DANXI_WEBVPN_MODE=off` to disable, or `DANXI_WEBVPN_MODE=force` to use WebVPN only.
+
 Optional (trusted local dev only):
 
 python scripts/generate_daily.py --unsafe-allow-any-host
+
+Non-interactive runs can disable prompts:
+
+python scripts/generate_daily.py --webvpn-no-prompt
+
+Do not persist prompted WebVPN credentials:
+
+python scripts/generate_daily.py --webvpn-no-save-credentials
 
 ## Scheduling
 

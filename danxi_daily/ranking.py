@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .models import RankedPost, extract_prefetch_floors, normalize_hole_id
 from .utils import extract_text_lines, parse_int, recency_factor
+
+
+_INVALID_DISCUSSION_PATTERNS = [
+    re.compile(r"(?:收|出|求|蹲|互换|交换)\s*(?:资料|课件|讲义|笔记)", re.IGNORECASE),
+    re.compile(r"(?:代课|替课|带课|求代课|找代课|代上课)", re.IGNORECASE),
+    re.compile(r"(?:代刷|代锻|代跑|刷锻)", re.IGNORECASE),
+    re.compile(r"(?:资料\s*dd|dd\s*资料)", re.IGNORECASE),
+]
 
 
 def _sum_floor_likes(floors: list[dict[str, Any]]) -> int:
@@ -33,14 +42,41 @@ def _build_excerpt(hole: dict[str, Any], floors: list[dict[str, Any]], max_chars
     return joined[: max_chars - 3].rstrip() + "..."
 
 
+def _collect_discussion_text(hole: dict[str, Any], floors: list[dict[str, Any]]) -> str:
+    segments: list[str] = []
+    content = hole.get("content")
+    if isinstance(content, str) and content.strip():
+        segments.append(content)
+    for floor in floors[:8]:
+        text = floor.get("content")
+        if isinstance(text, str) and text.strip():
+            segments.append(text)
+    return "\n".join(segments)
+
+
+def _is_invalid_discussion(text: str) -> bool:
+    if not text.strip():
+        return False
+    return any(pattern.search(text) is not None for pattern in _INVALID_DISCUSSION_PATTERNS)
+
+
+def _passes_engagement_gate(view_count: int, reply_count: int) -> bool:
+    # Keep meaningful discussions and avoid low-signal noise.
+    if view_count >= 120 or reply_count >= 8:
+        return True
+    if view_count >= 80 and reply_count >= 4:
+        return True
+    return False
+
+
 def rank_holes(
     holes: list[dict[str, Any]],
     source_endpoint: str,
-    half_life_hours: float = 12.0,
-    weight_view: float = 0.03,
-    weight_reply: float = 1.6,
-    weight_like: float = 2.4,
-    weight_recency: float = 3.2,
+    half_life_hours: float = 16.0,
+    weight_view: float = 0.08,
+    weight_reply: float = 5.0,
+    weight_like: float = 1.0,
+    weight_recency: float = 1.5,
 ) -> list[RankedPost]:
     ranked: list[RankedPost] = []
 
@@ -54,6 +90,12 @@ def rank_holes(
         like_sum = _sum_floor_likes(floors)
         reply_count = parse_int(raw_hole.get("reply"), default=len(floors))
         view_count = parse_int(raw_hole.get("view"), default=0)
+
+        discussion_text = _collect_discussion_text(raw_hole, floors)
+        if _is_invalid_discussion(discussion_text):
+            continue
+        if not _passes_engagement_gate(view_count, reply_count):
+            continue
 
         score = (
             (view_count * weight_view)
@@ -83,6 +125,7 @@ def rank_holes(
         key=lambda item: (
             -item.hot_score,
             -(item.reply),
+            -(item.view),
             -(item.like_sum),
             -(item.hole_id),
         )

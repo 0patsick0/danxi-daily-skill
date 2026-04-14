@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from .client import fetch_hole_floors, fetch_holes_with_fallback
+from .models import normalize_hole_id
 from .poster import post_markdown
 from .ranking import rank_holes
 from .reporter import build_daily_markdown
 from .security import require_https, validate_allowed_host
 from .summarizer import summarize_post
-from .utils import iso_utc_hours_ago, write_json, write_text
+from .utils import iso_utc_hours_ago, parse_iso8601, write_json, write_text
+from .webvpn import WebVPNClient
 
 
 @dataclass
@@ -40,6 +42,89 @@ class PipelineConfig:
     unsafe_allow_any_host: bool = False
     post_dedupe_file: Path = Path("outputs/last_post.sha256")
     verbose: bool = False
+    webvpn_client: WebVPNClient | None = None
+    force_webvpn: bool = False
+
+
+def _window_hours(total_hours: int) -> list[int]:
+    base = [1, 2, 4, 8, 12, 24]
+    usable = [h for h in base if h <= total_hours]
+    if total_hours not in usable:
+        usable.append(total_hours)
+    return sorted({max(1, h) for h in usable})
+
+
+def _merge_hole(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    existing_reply = int(existing.get("reply") or 0)
+    candidate_reply = int(candidate.get("reply") or 0)
+    existing_view = int(existing.get("view") or 0)
+    candidate_view = int(candidate.get("view") or 0)
+
+    existing_score = (existing_view, existing_reply)
+    candidate_score = (candidate_view, candidate_reply)
+    chosen = candidate if candidate_score > existing_score else existing
+
+    t_existing = parse_iso8601(existing.get("time_updated"))
+    t_candidate = parse_iso8601(candidate.get("time_updated"))
+    if t_existing is None:
+        return chosen
+    if t_candidate is None:
+        return chosen
+    return candidate if t_candidate > t_existing else chosen
+
+
+def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]], str]:
+    merged: dict[int, dict[str, Any]] = {}
+    endpoint = config.base_urls[0].rstrip("/")
+    errors: list[str] = []
+
+    for hours in _window_hours(config.hours):
+        start_time = iso_utc_hours_ago(hours)
+        try:
+            holes, used_endpoint = fetch_holes_with_fallback(
+                base_urls=config.base_urls,
+                start_time=start_time,
+                limit=config.fetch_limit,
+                division_id=config.division_id,
+                token=config.api_token,
+                timeout=config.timeout,
+                webvpn_client=config.webvpn_client,
+                force_webvpn=config.force_webvpn,
+            )
+            endpoint = used_endpoint
+        except RuntimeError as exc:
+            errors.append(str(exc))
+            continue
+
+        for hole in holes:
+            try:
+                hole_id = normalize_hole_id(hole)
+            except ValueError:
+                continue
+
+            current = merged.get(hole_id)
+            if current is None:
+                merged[hole_id] = hole
+            else:
+                merged[hole_id] = _merge_hole(current, hole)
+
+    if not merged:
+        raise RuntimeError("; ".join(errors) if errors else "all endpoints failed")
+
+    cutoff = parse_iso8601(iso_utc_hours_ago(config.hours))
+    merged_items = list(merged.values())
+    if cutoff is None:
+        return merged_items, endpoint
+
+    recent_items: list[dict[str, Any]] = []
+    for hole in merged_items:
+        created_at = parse_iso8601(hole.get("time_created"))
+        if created_at is not None and created_at >= cutoff:
+            recent_items.append(hole)
+
+    if recent_items:
+        return recent_items, endpoint
+    return merged_items, endpoint
 
 
 def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
@@ -54,14 +139,7 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
             validate_allowed_host(config.post_endpoint, config.allowed_post_hosts)
 
     start_time = iso_utc_hours_ago(config.hours)
-    holes, used_endpoint = fetch_holes_with_fallback(
-        base_urls=config.base_urls,
-        start_time=start_time,
-        limit=config.fetch_limit,
-        division_id=config.division_id,
-        token=config.api_token,
-        timeout=config.timeout,
-    )
+    holes, used_endpoint = _fetch_hot_candidates(config)
 
     write_json(config.output_holes, holes)
 
@@ -76,6 +154,8 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
             token=config.api_token,
             size=config.floor_enrich_size,
             timeout=config.timeout,
+            webvpn_client=config.webvpn_client,
+            force_webvpn=config.force_webvpn,
         )
         if floors:
             if not isinstance(hole.get("floors"), dict):

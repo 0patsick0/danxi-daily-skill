@@ -7,6 +7,7 @@ import urllib.request
 from typing import Any
 
 from .security import sanitize_url_for_log
+from .webvpn import WebVPNAuthError, WebVPNClient, WebVPNError
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -34,7 +35,10 @@ def _headers(token: str | None) -> dict[str, str]:
 
 
 def _request_json(url: str, params: dict[str, Any], token: str | None, timeout: int) -> Any:
-    encoded = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    encoded = urllib.parse.urlencode(
+        {k: v for k, v in params.items() if v is not None},
+        safe=":-TZ+.,",
+    )
     full_url = f"{url}?{encoded}" if encoded else url
     req = urllib.request.Request(full_url, method="GET", headers=_headers(token))
     with _SAFE_OPENER.open(req, timeout=timeout) as resp:
@@ -59,6 +63,8 @@ def fetch_holes_with_fallback(
     division_id: int | None,
     token: str | None,
     timeout: int = 15,
+    webvpn_client: WebVPNClient | None = None,
+    force_webvpn: bool = False,
 ) -> tuple[list[dict[str, Any]], str]:
     errors: list[str] = []
     for base in base_urls:
@@ -69,12 +75,28 @@ def fetch_holes_with_fallback(
             "length": limit,
             "division_id": division_id,
         }
+        if webvpn_client is not None and force_webvpn:
+            try:
+                payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
+                items = _extract_items(payload)
+                return items, clean_base
+            except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError) as exc:
+                errors.append(f"{sanitize_url_for_log(clean_base)} via webvpn: {exc}")
+                continue
+
         try:
             payload = _request_json(url, params=params, token=token, timeout=timeout)
             items = _extract_items(payload)
             return items, clean_base
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             errors.append(f"{sanitize_url_for_log(clean_base)}: {exc}")
+            if webvpn_client is not None:
+                try:
+                    payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
+                    items = _extract_items(payload)
+                    return items, clean_base
+                except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError) as vpn_exc:
+                    errors.append(f"{sanitize_url_for_log(clean_base)} via webvpn: {vpn_exc}")
     raise RuntimeError("; ".join(errors) if errors else "all endpoints failed")
 
 
@@ -84,12 +106,27 @@ def fetch_hole_floors(
     token: str | None,
     size: int = 40,
     timeout: int = 15,
+    webvpn_client: WebVPNClient | None = None,
+    force_webvpn: bool = False,
 ) -> list[dict[str, Any]]:
     clean_base = base_url.rstrip("/")
     params = {"offset": 0, "size": size}
     url = f"{clean_base}/holes/{hole_id}/floors"
+    if webvpn_client is not None and force_webvpn:
+        try:
+            payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
+            return _extract_items(payload)
+        except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError):
+            return []
+
     try:
         payload = _request_json(url, params=params, token=token, timeout=timeout)
         return _extract_items(payload)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
+        if webvpn_client is not None:
+            try:
+                payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
+                return _extract_items(payload)
+            except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError):
+                return []
         return []
