@@ -9,6 +9,44 @@ from danxi_daily.webvpn import translate_to_webvpn
 
 
 class ClientWebvpnFallbackTests(unittest.TestCase):
+    @patch("danxi_daily.client.should_prefer_webvpn", return_value=True)
+    @patch("danxi_daily.client._request_json")
+    def test_private_host_prefers_webvpn_before_direct(self, mock_request_json, _mock_prefer) -> None:
+        webvpn_client = Mock()
+        webvpn_client.request_json.return_value = [{"hole_id": 9}]
+
+        holes, _ = fetch_holes_with_fallback(
+            base_urls=["https://forum.fduhole.com/api"],
+            start_time="2026-01-01T00:00:00Z",
+            limit=10,
+            division_id=None,
+            token=None,
+            webvpn_client=webvpn_client,
+        )
+
+        self.assertEqual(holes[0]["hole_id"], 9)
+        mock_request_json.assert_not_called()
+
+    @patch("danxi_daily.client.should_prefer_webvpn", return_value=True)
+    @patch("danxi_daily.client._request_json")
+    def test_private_host_webvpn_failure_falls_back_to_direct(self, mock_request_json, _mock_prefer) -> None:
+        mock_request_json.return_value = [{"hole_id": 7}]
+        webvpn_client = Mock()
+        webvpn_client.request_json.side_effect = urllib.error.URLError("vpn down")
+
+        holes, _ = fetch_holes_with_fallback(
+            base_urls=["https://forum.fduhole.com/api"],
+            start_time="2026-01-01T00:00:00Z",
+            limit=10,
+            division_id=None,
+            token=None,
+            webvpn_client=webvpn_client,
+        )
+
+        self.assertEqual(holes[0]["hole_id"], 7)
+        self.assertEqual(webvpn_client.request_json.call_count, 1)
+        self.assertEqual(mock_request_json.call_count, 1)
+
     @patch("danxi_daily.client._request_json")
     def test_fallback_to_webvpn_on_direct_failure(self, mock_request_json) -> None:
         mock_request_json.side_effect = urllib.error.URLError("tls timeout")
@@ -29,8 +67,9 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
         self.assertEqual(holes[0]["hole_id"], 1)
         self.assertEqual(webvpn_client.request_json.call_count, 1)
 
+    @patch("danxi_daily.client.should_prefer_webvpn", return_value=False)
     @patch("danxi_daily.client._request_json")
-    def test_direct_success_skips_webvpn(self, mock_request_json) -> None:
+    def test_direct_success_skips_webvpn(self, mock_request_json, _mock_prefer) -> None:
         mock_request_json.return_value = [{"hole_id": 2}]
         webvpn_client = Mock()
 

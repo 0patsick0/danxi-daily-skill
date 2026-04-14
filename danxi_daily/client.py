@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import urllib.error
 import urllib.parse
@@ -56,6 +57,23 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     raise ValueError("API payload is not a hole list")
 
 
+def should_prefer_webvpn(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+
+    # Known DanXi upstream domains commonly resolve to campus private addresses.
+    if host in {"forum.fduhole.com", "api.fduhole.com", "auth.fduhole.com"}:
+        return True
+
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+    except ValueError:
+        return False
+
+
 def fetch_holes_with_fallback(
     base_urls: list[str],
     start_time: str,
@@ -75,13 +93,27 @@ def fetch_holes_with_fallback(
             "length": limit,
             "division_id": division_id,
         }
-        if webvpn_client is not None and force_webvpn:
+        prefer_webvpn = webvpn_client is not None and (force_webvpn or should_prefer_webvpn(clean_base))
+
+        if prefer_webvpn:
             try:
                 payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
                 items = _extract_items(payload)
                 return items, clean_base
-            except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError) as exc:
+            except (
+                WebVPNError,
+                WebVPNAuthError,
+                urllib.error.URLError,
+                TimeoutError,
+                OSError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
                 errors.append(f"{sanitize_url_for_log(clean_base)} via webvpn: {exc}")
+                if force_webvpn:
+                    continue
+
+        if force_webvpn:
                 continue
 
         try:
@@ -95,7 +127,15 @@ def fetch_holes_with_fallback(
                     payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
                     items = _extract_items(payload)
                     return items, clean_base
-                except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError) as vpn_exc:
+                except (
+                    WebVPNError,
+                    WebVPNAuthError,
+                    urllib.error.URLError,
+                    TimeoutError,
+                    OSError,
+                    ValueError,
+                    json.JSONDecodeError,
+                ) as vpn_exc:
                     errors.append(f"{sanitize_url_for_log(clean_base)} via webvpn: {vpn_exc}")
     raise RuntimeError("; ".join(errors) if errors else "all endpoints failed")
 
@@ -116,7 +156,15 @@ def fetch_hole_floors(
         try:
             payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
             return _extract_items(payload)
-        except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError):
+        except (
+            WebVPNError,
+            WebVPNAuthError,
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
             return []
 
     try:
@@ -127,6 +175,6 @@ def fetch_hole_floors(
             try:
                 payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
                 return _extract_items(payload)
-            except (WebVPNError, WebVPNAuthError, ValueError, json.JSONDecodeError):
+            except (WebVPNError, WebVPNAuthError, urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
                 return []
         return []

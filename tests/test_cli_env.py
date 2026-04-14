@@ -175,7 +175,7 @@ class CliEnvTests(unittest.TestCase):
                     with patch("sys.argv", argv), patch("sys.stdin.isatty", return_value=True), patch(
                         "builtins.input", return_value="retry-user"
                     ), patch("getpass.getpass", return_value="retry-pass"), patch(
-                        "danxi_daily.cli.WebVPNClient.obtain_forum_api_token", return_value=None
+                        "danxi_daily.cli.WebVPNClient.obtain_forum_api_token", return_value="fresh-token"
                     ):
                         code = cli.main()
                 self.assertEqual(code, 0)
@@ -185,8 +185,12 @@ class CliEnvTests(unittest.TestCase):
             env_text = (root / ".env").read_text(encoding="utf-8")
             self.assertIn("DANXI_WEBVPN_USERNAME=retry-user", env_text)
             self.assertIn("DANXI_WEBVPN_PASSWORD=retry-pass", env_text)
+            self.assertIn("DANXI_API_TOKEN=fresh-token", env_text)
 
         self.assertEqual(mock_run_pipeline.call_count, 2)
+        second_config = mock_run_pipeline.call_args_list[1][0][0]
+        self.assertTrue(second_config.force_webvpn)
+        self.assertEqual(second_config.api_token, "fresh-token")
 
     @patch("danxi_daily.cli.run_pipeline", return_value={"ok": True})
     def test_auto_obtained_api_token_is_persisted(self, mock_run_pipeline) -> None:

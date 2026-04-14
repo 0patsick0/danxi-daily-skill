@@ -202,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bypass URL host allowlist checks. Use only in trusted local dev.",
     )
     parser.add_argument("--llm-provider", type=str, default=os.getenv("DANXI_LLM_PROVIDER", "auto"))
-    parser.add_argument("--timeout", type=int, default=15)
+    parser.add_argument("--timeout", type=int, default=25)
     parser.add_argument("--prompt", type=Path, default=Path("prompts/summarize.md"))
     parser.add_argument("--output-markdown", type=Path, default=Path("outputs/daily.md"))
     parser.add_argument("--output-holes", type=Path, default=Path("outputs/holes.raw.json"))
@@ -336,7 +336,13 @@ def main() -> int:
             timeout=args.timeout,
             allowed_hosts=read_allowlist,
         )
-        config.api_token = _maybe_fill_api_token(args, env_path, config.webvpn_client, config.api_token)
+        # For prompted first-time credentials, force a fresh token and prefer WebVPN path for this retry.
+        config.force_webvpn = True
+        refreshed_after_prompt = _refresh_api_token(args, env_path, config.webvpn_client)
+        if refreshed_after_prompt:
+            config.api_token = refreshed_after_prompt
+        else:
+            config.api_token = _maybe_fill_api_token(args, env_path, config.webvpn_client, config.api_token)
         result = run_pipeline(config)
 
     print(json.dumps(result, ensure_ascii=False, indent=2))

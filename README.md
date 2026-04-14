@@ -89,6 +89,13 @@ WebVPN fallback:
 - First interactive run can prompt for WebVPN student credentials and persist to `.env`.
 - If `DANXI_API_TOKEN` is empty, the tool will try to exchange WebVPN credentials for a forum API token automatically.
 - Set `DANXI_WEBVPN_MODE=off` to disable, or `DANXI_WEBVPN_MODE=force` to use WebVPN only.
+- For first-time setup in unstable networks, prefer forcing WebVPN once:
+  - PowerShell: `py scripts/generate_daily.py --webvpn-mode force --hours 24 --top 12`
+  - Bash: `bash scripts/run_daily.sh --webvpn-mode force --hours 24 --top 12`
+- Stability tuning (optional):
+  - `DANXI_WEBVPN_RETRIES` (default 5)
+  - `DANXI_WEBVPN_BACKOFF_BASE` (default 0.8)
+  - `DANXI_WEBVPN_TIMEOUT_SCALE` (default 1.35)
 
 Optional (trusted local dev only):
 

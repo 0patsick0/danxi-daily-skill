@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .client import fetch_hole_floors, fetch_holes_with_fallback
+from .client import fetch_hole_floors, fetch_holes_with_fallback, should_prefer_webvpn
 from .models import normalize_hole_id
 from .poster import post_markdown
 from .ranking import rank_holes
@@ -140,6 +140,9 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
 
     start_time = iso_utc_hours_ago(config.hours)
     holes, used_endpoint = _fetch_hot_candidates(config)
+    prefer_webvpn_for_floors = config.webvpn_client is not None and (
+        config.force_webvpn or should_prefer_webvpn(used_endpoint)
+    )
 
     write_json(config.output_holes, holes)
 
@@ -155,7 +158,7 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
             size=config.floor_enrich_size,
             timeout=config.timeout,
             webvpn_client=config.webvpn_client,
-            force_webvpn=config.force_webvpn,
+            force_webvpn=prefer_webvpn_for_floors,
         )
         if floors:
             if not isinstance(hole.get("floors"), dict):

@@ -5,8 +5,9 @@ import json
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
-from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, _PreserveMethodRedirectHandler
+from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, WebVPNError, _PreserveMethodRedirectHandler
 
 
 def _http_error(code: int, body: dict[str, str]) -> urllib.error.HTTPError:
@@ -20,6 +21,22 @@ def _http_error(code: int, body: dict[str, str]) -> urllib.error.HTTPError:
 
 
 class WebvpnTokenTests(unittest.TestCase):
+    def test_invalid_retry_env_values_fall_back_to_defaults(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "DANXI_WEBVPN_RETRIES": "bad",
+                "DANXI_WEBVPN_BACKOFF_BASE": "oops",
+                "DANXI_WEBVPN_TIMEOUT_SCALE": "nah",
+            },
+            clear=False,
+        ):
+            client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+
+        self.assertEqual(client.max_retries, 5)
+        self.assertAlmostEqual(client.backoff_base, 0.8)
+        self.assertAlmostEqual(client.timeout_scale, 1.35)
+
     def test_preserve_redirect_blocks_untrusted_host(self) -> None:
         handler = _PreserveMethodRedirectHandler()
         req = urllib.request.Request(
@@ -151,6 +168,35 @@ class WebvpnTokenTests(unittest.TestCase):
         with patch("danxi_daily.webvpn.translate_to_webvpn", return_value="https://webvpn.fudan.edu.cn/mock"):
             with self.assertRaises(WebVPNAuthError):
                 client.obtain_forum_api_token()
+
+    def test_obtain_forum_api_token_wraps_oserror(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+
+        def fail_auth():
+            raise OSError("socket fail")
+
+        client._ensure_authenticated = fail_auth  # type: ignore[method-assign]
+        with self.assertRaises(WebVPNAuthError):
+            client.obtain_forum_api_token()
+
+    def test_request_json_wraps_oserror_from_open(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        client._ensure_authenticated = lambda: None  # type: ignore[method-assign]
+
+        def fail_open(req, timeout=None):
+            raise OSError("socket fail")
+
+        client._open = fail_open  # type: ignore[method-assign]
+
+        with self.assertRaises(WebVPNError) as ctx:
+            client.request_json(
+                "https://forum.fduhole.com/api/holes",
+                params={"length": 1},
+                token=None,
+                timeout=10,
+            )
+
+        self.assertIn("webvpn request failed", str(ctx.exception))
 
 
 if __name__ == "__main__":

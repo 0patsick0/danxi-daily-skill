@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import html as html_lib
+import os
 import re
 import time
 import urllib.error
@@ -37,6 +38,28 @@ class WebVPNError(RuntimeError):
 
 class WebVPNAuthError(WebVPNError):
     pass
+
+
+def _read_env_int(name: str, default: int, min_value: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(value, min_value)
+
+
+def _read_env_float(name: str, default: float, min_value: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(value, min_value)
 
 
 class _PreserveMethodRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -167,6 +190,9 @@ class WebVPNClient:
         self.credentials = credentials
         self.timeout = timeout
         self.allowed_hosts = {x.lower() for x in allowed_hosts} if allowed_hosts else None
+        self.max_retries = _read_env_int("DANXI_WEBVPN_RETRIES", default=5, min_value=1)
+        self.backoff_base = _read_env_float("DANXI_WEBVPN_BACKOFF_BASE", default=0.8, min_value=0.2)
+        self.timeout_scale = _read_env_float("DANXI_WEBVPN_TIMEOUT_SCALE", default=1.35, min_value=1.0)
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(
             _PreserveMethodRedirectHandler(),
@@ -174,23 +200,33 @@ class WebVPNClient:
         )
         self._authenticated = False
 
-    def _open(self, request: str | urllib.request.Request, timeout: int | None = None) -> tuple[str, str]:
-        final_timeout = timeout if timeout is not None else self.timeout
+    def _attempt_open_with_retries(
+        self,
+        opener: Any,
+        request: str | urllib.request.Request,
+        timeout: int,
+    ) -> tuple[str, str]:
         last_error: Exception | None = None
-        for attempt in range(3):
+        current_timeout = max(float(timeout), 1.0)
+        for attempt in range(self.max_retries):
             try:
-                with self._opener.open(request, timeout=final_timeout) as resp:
+                with opener.open(request, timeout=current_timeout) as resp:
                     body = resp.read().decode("utf-8", errors="replace")
                     final_url = resp.geturl()
                 return body, final_url
-            except (urllib.error.URLError, TimeoutError) as exc:
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_error = exc
-                if attempt == 2:
+                if attempt == self.max_retries - 1:
                     break
-                time.sleep(0.8 * (attempt + 1))
+                time.sleep(self.backoff_base * (2 ** attempt))
+                current_timeout = min(current_timeout * self.timeout_scale, current_timeout + 20.0)
 
         assert last_error is not None
         raise last_error
+
+    def _open(self, request: str | urllib.request.Request, timeout: int | None = None) -> tuple[str, str]:
+        final_timeout = timeout if timeout is not None else self.timeout
+        return self._attempt_open_with_retries(self._opener, request, final_timeout)
 
     def _open_following_post_redirects(
         self,
@@ -202,22 +238,7 @@ class WebVPNClient:
             _PreserveMethodRedirectHandler(),
             urllib.request.HTTPCookieProcessor(self._cookie_jar),
         )
-
-        last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                with opener.open(request, timeout=final_timeout) as resp:
-                    body = resp.read().decode("utf-8", errors="replace")
-                    final_url = resp.geturl()
-                return body, final_url
-            except (urllib.error.URLError, TimeoutError) as exc:
-                last_error = exc
-                if attempt == 2:
-                    break
-                time.sleep(0.8 * (attempt + 1))
-
-        assert last_error is not None
-        raise last_error
+        return self._attempt_open_with_retries(opener, request, final_timeout)
 
     def _post_json(self, url: str, payload: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
         req = urllib.request.Request(
@@ -426,7 +447,7 @@ class WebVPNClient:
                 method="POST",
             )
             body, _ = self._open(req)
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise WebVPNAuthError(f"webvpn login request failed: {exc}") from exc
 
         try:
@@ -446,7 +467,7 @@ class WebVPNClient:
         absolute_url = urllib.parse.urljoin(WEBVPN_LOGIN_URL, redirect_url)
         try:
             self._open(absolute_url)
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise WebVPNAuthError(f"webvpn post-login redirect failed: {exc}") from exc
 
         self._authenticated = True
@@ -474,7 +495,7 @@ class WebVPNClient:
     def obtain_forum_api_token(self) -> str:
         try:
             self._ensure_authenticated()
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise WebVPNAuthError(f"webvpn auth session init failed: {exc}") from exc
 
         proxied_login_url = translate_to_webvpn(
@@ -502,7 +523,7 @@ class WebVPNClient:
             )
 
             try:
-                body, _ = self._open_following_post_redirects(req, timeout=max(self.timeout, 20))
+                body, _ = self._open_following_post_redirects(req, timeout=max(self.timeout, 30))
                 data = json.loads(body)
                 if not isinstance(data, dict):
                     raise WebVPNAuthError("auth login response format is invalid")
@@ -514,7 +535,7 @@ class WebVPNClient:
                 message = self._parse_auth_error_message(exc)
                 last_error = f"{email}: {message}"
                 continue
-            except (urllib.error.URLError, TimeoutError) as exc:
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_error = f"{email}: network error: {exc}"
                 continue
             except (json.JSONDecodeError, WebVPNAuthError) as exc:
@@ -540,7 +561,10 @@ class WebVPNClient:
         if not proxied_url:
             raise WebVPNError("url is not supported by webvpn")
 
-        self._ensure_authenticated()
+        try:
+            self._ensure_authenticated()
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise WebVPNAuthError(f"webvpn auth session init failed: {exc}") from exc
 
         req = urllib.request.Request(proxied_url, method="GET", headers=_json_headers(token))
         try:
@@ -553,7 +577,7 @@ class WebVPNClient:
                 detail = ""
             extra = f" body={detail[:200]}" if detail else ""
             raise WebVPNError(f"webvpn request failed: HTTP {exc.code} {exc.reason}{extra}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise WebVPNError(f"webvpn request failed: {exc}") from exc
 
         if final_url.startswith(f"https://{WEBVPN_HOST}/login"):

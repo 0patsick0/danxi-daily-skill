@@ -30,6 +30,10 @@ Windows (PowerShell) alternative:
 
 scripts/run_daily.ps1 --hours 24 --top 12
 
+First-time credential setup (recommended):
+
+bash scripts/run_daily.sh --webvpn-mode force --hours 24 --top 12
+
 ## Common Options
 
 - --hours: Time window in hours.

@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .models import RankedPost
-from .utils import clean_publish_text
 
 
 def build_daily_markdown(
@@ -35,13 +34,11 @@ def build_daily_markdown(
         return "\n".join(lines) + "\n"
 
     for idx, post in enumerate(posts, start=1):
-        excerpt = clean_publish_text(post.excerpt) or "暂无"
         lines.extend(
             [
-                f"### {idx}. 📍 热门洞 #{post.hole_id}",
+                f"No.{idx} #{post.hole_id}",
                 f"- 🔥 热度指数：{post.hot_score:.3f}",
                 f"- 👀 浏览：{post.view} ｜ 💬 回复：{post.reply} ｜ 👍 点赞：{post.like_sum}",
-                f"- 📝 原文节选：{excerpt}",
                 "",
             ]
         )
