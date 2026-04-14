@@ -13,7 +13,6 @@ from .poster import post_markdown
 from .ranking import rank_holes
 from .reporter import build_daily_markdown
 from .security import require_https, validate_allowed_host
-from .summarizer import summarize_post
 from .utils import iso_utc_hours_ago, parse_iso8601, write_json, write_text
 from .webvpn import WebVPNClient
 
@@ -165,14 +164,6 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
 
     ranked = rank_holes(holes, source_endpoint=used_endpoint)
     top_posts = ranked[: config.top_n]
-
-    for post in top_posts:
-        post.summary = summarize_post(
-            post,
-            prompt_path=config.prompt_path,
-            provider=config.llm_provider,
-            timeout=config.timeout,
-        )
 
     report = build_daily_markdown(top_posts, title_prefix=config.title_prefix)
     write_text(config.output_markdown, report)

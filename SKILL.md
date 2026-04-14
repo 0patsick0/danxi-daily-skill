@@ -15,8 +15,7 @@ metadata:
 This skill generates a publish-ready daily report:
 1. Fetch recent DanXi holes from API.
 2. Rank posts by hotness.
-3. Summarize top posts with LLM (or fallback extractive summary).
-4. Render Markdown for manual review and posting.
+3. Render Markdown for manual review and posting.
 
 ## Safety Defaults
 
@@ -25,7 +24,11 @@ This skill generates a publish-ready daily report:
 
 ## Command
 
-python scripts/generate_daily.py --hours 24 --top 12
+bash scripts/run_daily.sh --hours 24 --top 12
+
+Windows (PowerShell) alternative:
+
+scripts/run_daily.ps1 --hours 24 --top 12
 
 ## Common Options
 

@@ -27,12 +27,12 @@ class ReporterFormatTests(unittest.TestCase):
 
         self.assertIn("🌟", text)
         self.assertIn("今日热门话题", text)
-        self.assertIn("话题解读", text)
         self.assertIn("原文节选", text)
         self.assertIn("开源仓库", text)
         self.assertNotIn("Generated at", text)
         self.assertNotIn("Hot Posts", text)
         self.assertNotIn("GitHub 仓库", text)
+        self.assertNotIn("话题解读", text)
         self.assertNotIn("本文为自动整理的旦夕 24 小时热点话题精选", text)
         self.assertNotIn("dx_guilty", text)
         self.assertNotIn("dx_call", text)

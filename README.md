@@ -41,7 +41,18 @@ Then restart Claude Code / reopen your session.
 2. Copy .env.example to .env and fill required values.
 3. Run:
 
-python scripts/generate_daily.py --hours 24 --top 12
+Windows (PowerShell):
+
+py scripts/generate_daily.py --hours 24 --top 12
+
+macOS/Linux:
+
+python3 scripts/generate_daily.py --hours 24 --top 12
+
+Wrapper command (auto-select interpreter):
+
+PowerShell: scripts/run_daily.ps1 --hours 24 --top 12
+Bash: bash scripts/run_daily.sh --hours 24 --top 12
 
 Note: current forum API limits `length` to 10 per request. The CLI clamps `--fetch-limit` to 10 automatically.
 
@@ -62,7 +73,8 @@ Generated files:
 Posting is disabled by default.
 To post, provide endpoint and token:
 
-python scripts/generate_daily.py --post --post-endpoint "https://your-endpoint.example/api/posts"
+PowerShell: py scripts/generate_daily.py --post --post-endpoint "https://your-endpoint.example/api/posts"
+macOS/Linux: python3 scripts/generate_daily.py --post --post-endpoint "https://your-endpoint.example/api/posts"
 
 Requires environment variable:
 - DANXI_POST_TOKEN
@@ -80,15 +92,18 @@ WebVPN fallback:
 
 Optional (trusted local dev only):
 
-python scripts/generate_daily.py --unsafe-allow-any-host
+PowerShell: py scripts/generate_daily.py --unsafe-allow-any-host
+macOS/Linux: python3 scripts/generate_daily.py --unsafe-allow-any-host
 
 Non-interactive runs can disable prompts:
 
-python scripts/generate_daily.py --webvpn-no-prompt
+PowerShell: py scripts/generate_daily.py --webvpn-no-prompt
+macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-prompt
 
 Do not persist prompted WebVPN credentials:
 
-python scripts/generate_daily.py --webvpn-no-save-credentials
+PowerShell: py scripts/generate_daily.py --webvpn-no-save-credentials
+macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-save-credentials
 
 ## Scheduling
 

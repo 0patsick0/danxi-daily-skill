@@ -252,6 +252,14 @@ def main() -> int:
     if args.fetch_limit > 10:
         args.fetch_limit = 10
 
+    default_prompt = Path("prompts/summarize.md")
+    llm_provider_text = str(args.llm_provider).strip().lower()
+    if llm_provider_text not in {"", "auto", "none"} or args.prompt != default_prompt:
+        print(
+            "[notice] 当前版本已移除“话题解读”输出，--llm-provider 与 --prompt 参数将被忽略。",
+            file=sys.stderr,
+        )
+
     read_allowlist = normalize_allowed_hosts(args.allowed_read_hosts)
     post_allowlist = normalize_allowed_hosts(args.allowed_post_hosts)
 

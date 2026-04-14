@@ -35,14 +35,12 @@ def build_daily_markdown(
         return "\n".join(lines) + "\n"
 
     for idx, post in enumerate(posts, start=1):
-        summary = clean_publish_text(post.summary) or "暂无"
         excerpt = clean_publish_text(post.excerpt) or "暂无"
         lines.extend(
             [
                 f"### {idx}. 📍 热门洞 #{post.hole_id}",
                 f"- 🔥 热度指数：{post.hot_score:.3f}",
                 f"- 👀 浏览：{post.view} ｜ 💬 回复：{post.reply} ｜ 👍 点赞：{post.like_sum}",
-                f"- 🧠 话题解读：{summary}",
                 f"- 📝 原文节选：{excerpt}",
                 "",
             ]
