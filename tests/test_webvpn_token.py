@@ -31,6 +31,20 @@ class WebvpnTokenTests(unittest.TestCase):
         with self.assertRaises(WebVPNAuthError):
             handler.redirect_request(req, fp=None, code=307, msg="", headers={}, newurl="https://evil.example/steal")
 
+    def test_get_redirect_blocks_untrusted_host(self) -> None:
+        handler = _PreserveMethodRedirectHandler()
+        req = urllib.request.Request("https://webvpn.fudan.edu.cn/resource", method="GET")
+
+        with self.assertRaises(WebVPNAuthError):
+            handler.redirect_request(req, fp=None, code=302, msg="", headers={}, newurl="https://evil.example/path")
+
+    def test_get_redirect_blocks_https_to_http_downgrade(self) -> None:
+        handler = _PreserveMethodRedirectHandler()
+        req = urllib.request.Request("https://webvpn.fudan.edu.cn/resource", method="GET")
+
+        with self.assertRaises(WebVPNAuthError):
+            handler.redirect_request(req, fp=None, code=302, msg="", headers={}, newurl="http://webvpn.fudan.edu.cn/resource")
+
     def test_preserve_redirect_allows_trusted_host(self) -> None:
         handler = _PreserveMethodRedirectHandler()
         req = urllib.request.Request(
@@ -51,6 +65,27 @@ class WebvpnTokenTests(unittest.TestCase):
         self.assertIsNotNone(redirected)
         assert redirected is not None
         self.assertEqual(redirected.get_full_url(), "https://webvpn.fudan.edu.cn/next")
+
+    def test_cross_host_redirect_strips_authorization(self) -> None:
+        handler = _PreserveMethodRedirectHandler()
+        req = urllib.request.Request(
+            "https://webvpn.fudan.edu.cn/protected",
+            headers={"Authorization": "Bearer top-secret"},
+            method="GET",
+        )
+
+        redirected = handler.redirect_request(
+            req,
+            fp=None,
+            code=302,
+            msg="",
+            headers={"Location": "https://id.fudan.edu.cn/landing"},
+            newurl="https://id.fudan.edu.cn/landing",
+        )
+
+        self.assertIsNotNone(redirected)
+        assert redirected is not None
+        self.assertFalse(any(key.lower() == "authorization" for key, _ in redirected.header_items()))
 
     def test_candidate_email_variants(self) -> None:
         client = WebVPNClient(WebVPNCredentials(username="24307100036", password="x"), allowed_hosts={"forum.fduhole.com"})

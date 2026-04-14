@@ -40,20 +40,57 @@ class WebVPNAuthError(WebVPNError):
 
 
 class _PreserveMethodRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def _origin(self, url: str) -> tuple[str, str, int | None]:
+        parsed = urllib.parse.urlparse(url)
+        return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port
+
+    def _validated_hosts(self, old_url: str, new_url: str) -> tuple[tuple[str, str, int | None], tuple[str, str, int | None]]:
+        old_origin = self._origin(old_url)
+        new_origin = self._origin(new_url)
+        old_scheme, old_host, _ = old_origin
+        new_scheme, new_host, _ = new_origin
+
+        if new_scheme != "https":
+            raise WebVPNAuthError("unsafe redirect target scheme for authenticated request")
+        if (not new_host) or (new_host not in _SAFE_REDIRECT_HOSTS) or (old_host and old_host not in _SAFE_REDIRECT_HOSTS):
+            raise WebVPNAuthError("unsafe redirect target for authenticated request")
+        if old_scheme not in {"http", "https"}:
+            raise WebVPNAuthError("unsafe source scheme for authenticated request")
+        return old_origin, new_origin
+
+    def _sanitize_headers_on_origin_change(
+        self,
+        headers: dict[str, str],
+        old_origin: tuple[str, str, int | None],
+        new_origin: tuple[str, str, int | None],
+    ) -> dict[str, str]:
+        if old_origin == new_origin:
+            return headers
+        sanitized = dict(headers)
+        for key in list(sanitized.keys()):
+            if key.lower() == "authorization":
+                sanitized.pop(key, None)
+        return sanitized
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        old_origin, new_origin = self._validated_hosts(req.full_url, newurl)
         if code in {307, 308}:
-            old_host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
-            new_host = (urllib.parse.urlparse(newurl).hostname or "").lower()
-            # Reject cross-domain credential forwarding to untrusted targets.
-            if (not new_host) or (new_host not in _SAFE_REDIRECT_HOSTS) or (old_host and old_host not in _SAFE_REDIRECT_HOSTS):
-                raise WebVPNAuthError("unsafe redirect target for credentialed POST request")
+            safe_headers = self._sanitize_headers_on_origin_change(dict(req.header_items()), old_origin, new_origin)
             return urllib.request.Request(
                 newurl,
                 data=req.data,
-                headers=dict(req.header_items()),
+                headers=safe_headers,
                 method=req.get_method(),
             )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        safe_headers = self._sanitize_headers_on_origin_change(dict(redirected.header_items()), old_origin, new_origin)
+        redirected.headers.clear()
+        for key, value in safe_headers.items():
+            redirected.headers[key] = value
+        return redirected
 
 
 @dataclass
@@ -131,7 +168,10 @@ class WebVPNClient:
         self.timeout = timeout
         self.allowed_hosts = {x.lower() for x in allowed_hosts} if allowed_hosts else None
         self._cookie_jar = CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        self._opener = urllib.request.build_opener(
+            _PreserveMethodRedirectHandler(),
+            urllib.request.HTTPCookieProcessor(self._cookie_jar),
+        )
         self._authenticated = False
 
     def _open(self, request: str | urllib.request.Request, timeout: int | None = None) -> tuple[str, str]:
