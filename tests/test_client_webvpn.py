@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import urllib.error
 import unittest
 from unittest.mock import Mock, patch
@@ -19,6 +20,7 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
             base_urls=["https://forum.fduhole.com/api"],
             start_time="2026-01-01T00:00:00Z",
             limit=10,
+            offset=None,
             division_id=None,
             token=None,
             webvpn_client=webvpn_client,
@@ -38,6 +40,7 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
             base_urls=["https://forum.fduhole.com/api"],
             start_time="2026-01-01T00:00:00Z",
             limit=10,
+            offset=None,
             division_id=None,
             token=None,
             webvpn_client=webvpn_client,
@@ -57,6 +60,7 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
             base_urls=["https://forum.fduhole.com/api"],
             start_time="2026-01-01T00:00:00Z",
             limit=10,
+            offset=None,
             division_id=None,
             token=None,
             webvpn_client=webvpn_client,
@@ -77,6 +81,7 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
             base_urls=["https://forum.fduhole.com/api"],
             start_time="2026-01-01T00:00:00Z",
             limit=10,
+            offset=None,
             division_id=None,
             token=None,
             webvpn_client=webvpn_client,
@@ -94,6 +99,7 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
             base_urls=["https://forum.fduhole.com/api"],
             start_time="2026-01-01T00:00:00Z",
             limit=10,
+            offset=None,
             division_id=None,
             token=None,
             webvpn_client=webvpn_client,
@@ -102,6 +108,31 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
 
         self.assertEqual(holes[0]["hole_id"], 3)
         mock_request_json.assert_not_called()
+
+    @patch("danxi_daily.client.should_prefer_webvpn", return_value=True)
+    @patch("danxi_daily.client._request_json")
+    def test_webvpn_normalizes_time_params(self, mock_request_json, _mock_prefer) -> None:
+        webvpn_client = Mock()
+        webvpn_client.request_json.return_value = [{"hole_id": 10}]
+
+        holes, _ = fetch_holes_with_fallback(
+            base_urls=["https://forum.fduhole.com/api"],
+            start_time="2026-04-15T16:00:00Z",
+            limit=10,
+            offset="2026-04-15T17:01:02+08:00",
+            division_id=None,
+            token=None,
+            webvpn_client=webvpn_client,
+        )
+
+        self.assertEqual(holes[0]["hole_id"], 10)
+        mock_request_json.assert_not_called()
+        kwargs = webvpn_client.request_json.call_args.kwargs
+        params = kwargs["params"]
+        expected_start = datetime.fromisoformat("2026-04-15T16:00:00+00:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        expected_offset = datetime.fromisoformat("2026-04-15T17:01:02+08:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        self.assertEqual(params["start_time"], expected_start)
+        self.assertEqual(params["offset"], expected_offset)
 
 
 class WebvpnUrlTranslationTests(unittest.TestCase):

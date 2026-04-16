@@ -196,9 +196,9 @@ def _refresh_api_token(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate DanXi daily report.")
-    parser.add_argument("--hours", type=int, default=24, help="How many recent hours to include.")
+    parser.add_argument("--hours", type=int, default=24, help="Reserved for compatibility; daily report always uses today's full range.")
     parser.add_argument("--fetch-limit", type=int, default=10, help="How many holes to fetch (API max: 10).")
-    parser.add_argument("--top", type=int, default=12, help="How many ranked holes to keep.")
+    parser.add_argument("--top", type=int, default=10, help="How many ranked holes to keep.")
     parser.add_argument("--division-id", type=int, default=None, help="Optional division filter.")
     parser.add_argument("--base-urls", type=str, default=",".join(_default_base_urls()))
     parser.add_argument(

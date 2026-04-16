@@ -7,7 +7,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ from .poster import post_markdown
 from .ranking import rank_holes
 from .reporter import build_daily_markdown
 from .security import require_https, validate_allowed_host
-from .utils import ensure_parent, iso_utc_hours_ago, parse_iso8601, write_json, write_text
+from .utils import ensure_parent, parse_iso8601, write_json, write_text
 from .webvpn import WebVPNClient
 
 
@@ -26,7 +26,9 @@ class PipelineConfig:
     base_urls: list[str]
     hours: int = 24
     fetch_limit: int = 10
-    top_n: int = 12
+    top_n: int = 10
+    fetch_max_pages: int = 300
+    fetch_retry_per_page: int = 3
     division_id: int | None = None
     prompt_path: Path = Path("prompts/summarize.md")
     output_markdown: Path = Path("outputs/daily.md")
@@ -56,13 +58,17 @@ class PipelineConfig:
     archive_outputs: bool = True
     archive_dir: Path = Path("outputs/history")
 
+def _local_today_start_utc_iso() -> str:
+    now_local = datetime.now().astimezone()
+    day_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_utc = day_start_local.astimezone(timezone.utc)
+    return day_start_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def _window_hours(total_hours: int) -> list[int]:
-    base = [2, 6, 12, 24]
-    usable = [h for h in base if h <= total_hours]
-    if total_hours not in usable:
-        usable.append(total_hours)
-    return sorted({max(1, h) for h in usable})
+
+def _effective_start_time(hours: int) -> str:
+    _ = hours
+    # Daily report should always include the entire local day window.
+    return _local_today_start_utc_iso()
 
 
 _POST_SCHEDULE_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -172,7 +178,7 @@ def _archive_outputs(
         return {}
 
     now_local = datetime.now().astimezone()
-    stamp = now_local.strftime("%Y%m%d_%H%M%S_%f")
+    stamp = f"{now_local.strftime('%Y%m%d_%H%M%S_%f')}_{time.time_ns()}"
     month_dir = config.archive_dir / now_local.strftime("%Y%m")
 
     md_path = month_dir / f"daily_{stamp}.md"
@@ -209,31 +215,66 @@ def _merge_hole(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str
     return candidate if t_candidate > t_existing else chosen
 
 
+def _page_time_cursor(holes: list[dict[str, Any]]) -> str | None:
+    oldest: datetime | None = None
+    for hole in holes:
+        dt = parse_iso8601(hole.get("time_updated"))
+        if dt is None:
+            dt = parse_iso8601(hole.get("time_created"))
+        if dt is None:
+            continue
+        if oldest is None or dt < oldest:
+            oldest = dt
+
+    if oldest is None:
+        return None
+    # WebVPN /holes offset expects local wall-clock timestamp without timezone suffix.
+    return oldest.astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _webvpn_start_cursor() -> str:
+    # Start from current local time and page backward to today's cutoff.
+    return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]], str]:
     merged: dict[int, dict[str, Any]] = {}
     endpoint = config.base_urls[0].rstrip("/")
     errors: list[str] = []
-    effective_fetch_limit = min(10, max(1, config.fetch_limit))
-    target_unique_count = max(config.top_n * 2, effective_fetch_limit * 2)
+    start_time = _effective_start_time(config.hours)
+    # /api/holes currently accepts up to 10 items per request.
+    page_size = max(1, min(config.fetch_limit, 10))
+    use_time_offset = bool(config.force_webvpn)
+    offset: int | str | None = (_webvpn_start_cursor() if use_time_offset else 0)
+    previous_cursor: str | None = None
+    max_pages = max(1, config.fetch_max_pages)
+    retry_per_page = max(1, config.fetch_retry_per_page)
 
-    for hours in _window_hours(config.hours):
-        start_time = iso_utc_hours_ago(hours)
-        try:
-            holes, used_endpoint = fetch_holes_with_fallback(
-                base_urls=config.base_urls,
-                start_time=start_time,
-                limit=effective_fetch_limit,
-                division_id=config.division_id,
-                token=config.api_token,
-                timeout=config.timeout,
-                webvpn_client=config.webvpn_client,
-                force_webvpn=config.force_webvpn,
-            )
-            endpoint = used_endpoint
-        except RuntimeError as exc:
-            errors.append(str(exc))
-            continue
+    for _ in range(max_pages):
+        holes: list[dict[str, Any]] | None = None
+        for _attempt in range(retry_per_page):
+            try:
+                fetched, used_endpoint = fetch_holes_with_fallback(
+                    base_urls=config.base_urls,
+                    start_time=start_time,
+                    limit=page_size,
+                    offset=offset,
+                    division_id=config.division_id,
+                    token=config.api_token,
+                    timeout=config.timeout,
+                    webvpn_client=config.webvpn_client,
+                    force_webvpn=config.force_webvpn,
+                )
+                holes = fetched
+                endpoint = used_endpoint
+                break
+            except RuntimeError as exc:
+                errors.append(str(exc))
 
+        if holes is None:
+            break
+
+        new_count = 0
         for hole in holes:
             try:
                 hole_id = normalize_hole_id(hole)
@@ -243,30 +284,43 @@ def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]],
             current = merged.get(hole_id)
             if current is None:
                 merged[hole_id] = hole
+                new_count += 1
             else:
                 merged[hole_id] = _merge_hole(current, hole)
 
-        # Stop early when enough distinct candidates are available.
-        if len(merged) >= target_unique_count and hours >= min(config.hours, 12):
+        if len(holes) < page_size:
             break
+
+        if new_count == 0:
+            break
+
+        if use_time_offset:
+            next_cursor = _page_time_cursor(holes)
+            if not next_cursor or next_cursor == previous_cursor:
+                break
+            previous_cursor = next_cursor
+            offset = next_cursor
+        else:
+            assert isinstance(offset, int)
+            offset += len(holes)
 
     if not merged:
         raise RuntimeError("; ".join(errors) if errors else "all endpoints failed")
 
-    cutoff = parse_iso8601(iso_utc_hours_ago(config.hours))
     merged_items = list(merged.values())
+    cutoff = parse_iso8601(start_time)
     if cutoff is None:
         return merged_items, endpoint
 
-    recent_items: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
     for hole in merged_items:
         created_at = parse_iso8601(hole.get("time_created"))
+        if created_at is None:
+            created_at = parse_iso8601(hole.get("time_updated"))
         if created_at is not None and created_at >= cutoff:
-            recent_items.append(hole)
+            filtered.append(hole)
 
-    if recent_items:
-        return recent_items, endpoint
-    return merged_items, endpoint
+    return filtered, endpoint
 
 
 def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
@@ -280,7 +334,7 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
         if (not config.unsafe_allow_any_host) and config.allowed_post_hosts:
             validate_allowed_host(config.post_endpoint, config.allowed_post_hosts)
 
-    start_time = iso_utc_hours_ago(config.hours)
+    start_time = _effective_start_time(config.hours)
     holes, used_endpoint = _fetch_hot_candidates(config)
     prefer_webvpn_for_floors = config.webvpn_client is not None and (
         config.force_webvpn or should_prefer_webvpn(used_endpoint)

@@ -5,6 +5,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
 from .security import sanitize_url_for_log
@@ -57,6 +58,27 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     raise ValueError("API payload is not a hole list")
 
 
+def _normalize_webvpn_time(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    # WebVPN /holes endpoint expects local wall-clock timestamp without timezone suffix.
+    return dt.astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _normalize_webvpn_params(params: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(params)
+    normalized["start_time"] = _normalize_webvpn_time(normalized.get("start_time"))
+    normalized["offset"] = _normalize_webvpn_time(normalized.get("offset"))
+    return normalized
+
+
 def should_prefer_webvpn(url: str) -> bool:
     parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").strip().lower()
@@ -78,8 +100,9 @@ def fetch_holes_with_fallback(
     base_urls: list[str],
     start_time: str,
     limit: int,
-    division_id: int | None,
-    token: str | None,
+    offset: int | str | None = None,
+    division_id: int | None = None,
+    token: str | None = None,
     timeout: int = 15,
     webvpn_client: WebVPNClient | None = None,
     force_webvpn: bool = False,
@@ -91,13 +114,15 @@ def fetch_holes_with_fallback(
         params = {
             "start_time": start_time,
             "length": limit,
+            "offset": offset,
             "division_id": division_id,
         }
         prefer_webvpn = webvpn_client is not None and (force_webvpn or should_prefer_webvpn(clean_base))
 
         if prefer_webvpn:
             try:
-                payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
+                webvpn_params = _normalize_webvpn_params(params)
+                payload = webvpn_client.request_json(url, params=webvpn_params, token=token, timeout=timeout)
                 items = _extract_items(payload)
                 return items, clean_base
             except (
@@ -124,7 +149,8 @@ def fetch_holes_with_fallback(
             errors.append(f"{sanitize_url_for_log(clean_base)}: {exc}")
             if webvpn_client is not None:
                 try:
-                    payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
+                    webvpn_params = _normalize_webvpn_params(params)
+                    payload = webvpn_client.request_json(url, params=webvpn_params, token=token, timeout=timeout)
                     items = _extract_items(payload)
                     return items, clean_base
                 except (

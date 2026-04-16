@@ -28,7 +28,7 @@ Then restart Claude Code / reopen your session.
 - Dual endpoint fallback:
   - https://forum.fduhole.com/api
   - https://api.fduhole.com
-- Multi-window hotspot sampling across recent 24h slices (2/6/12/24h), then dedupe.
+- Daily full-range fetching from local 00:00 to now, with paged aggregation and dedupe.
 - Concurrent floor prefetch with local cache for faster repeated runs.
 - Timestamped history archive on every run (no overwrite of old reports).
 - Hotness ranking focused on view/reply signals with deterministic tie-breakers.
@@ -46,16 +46,16 @@ Then restart Claude Code / reopen your session.
 
 Windows (PowerShell):
 
-py scripts/generate_daily.py --hours 24 --top 12
+py scripts/generate_daily.py --hours 24 --top 10
 
 macOS/Linux:
 
-python3 scripts/generate_daily.py --hours 24 --top 12
+python3 scripts/generate_daily.py --hours 24 --top 10
 
 Wrapper command (auto-select interpreter):
 
-PowerShell: scripts/run_daily.ps1 --hours 24 --top 12
-Bash: bash scripts/run_daily.sh --hours 24 --top 12
+PowerShell: scripts/run_daily.ps1 --hours 24 --top 10
+Bash: bash scripts/run_daily.sh --hours 24 --top 10
 
 Note: current forum API limits `length` to 10 per request. The CLI clamps `--fetch-limit` to 10 automatically.
 
@@ -96,8 +96,8 @@ WebVPN fallback:
 - If `DANXI_API_TOKEN` is empty, the tool will try to exchange WebVPN credentials for a forum API token automatically.
 - Set `DANXI_WEBVPN_MODE=off` to disable, or `DANXI_WEBVPN_MODE=force` to use WebVPN only.
 - For first-time setup in unstable networks, prefer forcing WebVPN once:
-  - PowerShell: `py scripts/generate_daily.py --webvpn-mode force --hours 24 --top 12`
-  - Bash: `bash scripts/run_daily.sh --webvpn-mode force --hours 24 --top 12`
+  - PowerShell: `py scripts/generate_daily.py --webvpn-mode force --hours 24 --top 10`
+  - Bash: `bash scripts/run_daily.sh --webvpn-mode force --hours 24 --top 10`
 - Stability tuning (optional):
   - `DANXI_WEBVPN_RETRIES` (default 5)
   - `DANXI_WEBVPN_BACKOFF_BASE` (default 0.8)
