@@ -4,6 +4,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -39,6 +40,22 @@ def _bool_from_env(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be > 0")
+    return parsed
+
+
+def _hhmm_or_none(value: str) -> str | None:
+    text = value.strip()
+    if not text:
+        return None
+    if re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", text) is None:
+        raise argparse.ArgumentTypeError("time must be HH:MM in 24-hour format")
+    return text
 
 
 def _upsert_dotenv(path: Path, key: str, value: str) -> None:
@@ -203,10 +220,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--llm-provider", type=str, default=os.getenv("DANXI_LLM_PROVIDER", "auto"))
     parser.add_argument("--timeout", type=int, default=25)
+    parser.add_argument("--floor-enrich-size", type=int, default=int(os.getenv("DANXI_FLOOR_ENRICH_SIZE", "40")))
+    parser.add_argument(
+        "--floor-enrich-workers",
+        type=_positive_int,
+        default=int(os.getenv("DANXI_FLOOR_ENRICH_WORKERS", "6")),
+        help="Concurrent workers for fetching floor details.",
+    )
+    parser.add_argument(
+        "--floor-enrich-timeout",
+        type=_positive_int,
+        default=int(os.getenv("DANXI_FLOOR_ENRICH_TIMEOUT", "8")),
+        help="Per-floor request timeout seconds.",
+    )
+    parser.add_argument(
+        "--floor-cache-file",
+        type=Path,
+        default=Path(os.getenv("DANXI_FLOOR_CACHE_FILE", "outputs/floors_cache.json")),
+        help="Cache file for prefetched floors.",
+    )
     parser.add_argument("--prompt", type=Path, default=Path("prompts/summarize.md"))
     parser.add_argument("--output-markdown", type=Path, default=Path("outputs/daily.md"))
     parser.add_argument("--output-holes", type=Path, default=Path("outputs/holes.raw.json"))
     parser.add_argument("--output-ranked", type=Path, default=Path("outputs/ranked.json"))
+    parser.add_argument(
+        "--archive-dir",
+        type=Path,
+        default=Path(os.getenv("DANXI_ARCHIVE_DIR", "outputs/history")),
+        help="Directory for timestamped report archives.",
+    )
+    parser.add_argument(
+        "--archive-outputs",
+        action="store_true",
+        default=_bool_from_env("DANXI_ARCHIVE_OUTPUTS", True),
+        help="Write timestamped history files on every run.",
+    )
+    parser.add_argument(
+        "--no-archive-outputs",
+        action="store_true",
+        help="Disable timestamped history files.",
+    )
     parser.add_argument("--title-prefix", type=str, default="旦夕热榜日报")
     parser.add_argument(
         "--webvpn-mode",
@@ -232,6 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--post", action="store_true", help="Actually post to forum endpoint.")
     parser.add_argument("--post-endpoint", type=str, default=os.getenv("DANXI_POST_ENDPOINT"))
+    parser.add_argument(
+        "--post-at",
+        type=_hhmm_or_none,
+        default=(os.getenv("DANXI_POST_AT") or "").strip() or None,
+        help="Only post at/after local HH:MM each day. Example: 08:00",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print extra details such as post response snippets.")
     return parser
 
@@ -241,6 +300,12 @@ def main() -> int:
     _load_dotenv(env_path)
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.post_at is not None:
+        try:
+            args.post_at = _hhmm_or_none(str(args.post_at))
+        except argparse.ArgumentTypeError as exc:
+            parser.error(f"invalid DANXI_POST_AT/--post-at: {exc}")
 
     if args.webvpn_mode not in {"auto", "off", "force"}:
         parser.error("webvpn mode must be one of: auto, off, force")
@@ -295,10 +360,17 @@ def main() -> int:
         api_token=api_token,
         llm_provider=args.llm_provider,
         timeout=args.timeout,
+        floor_enrich_size=max(0, args.floor_enrich_size),
+        floor_fetch_workers=max(1, args.floor_enrich_workers),
+        floor_fetch_timeout=max(1, args.floor_enrich_timeout),
+        floor_cache_file=args.floor_cache_file,
         title_prefix=args.title_prefix,
+        archive_outputs=args.archive_outputs and (not args.no_archive_outputs),
+        archive_dir=args.archive_dir,
         post=args.post,
         post_endpoint=args.post_endpoint,
         post_token=os.getenv("DANXI_POST_TOKEN"),
+        post_schedule_hhmm=args.post_at,
         allowed_read_hosts=read_allowlist,
         allowed_post_hosts=post_allowlist,
         unsafe_allow_any_host=args.unsafe_allow_any_host,

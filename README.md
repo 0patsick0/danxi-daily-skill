@@ -28,12 +28,15 @@ Then restart Claude Code / reopen your session.
 - Dual endpoint fallback:
   - https://forum.fduhole.com/api
   - https://api.fduhole.com
-- Multi-window hotspot sampling across recent 24h slices (1/2/4/8/12/24h), then dedupe.
+- Multi-window hotspot sampling across recent 24h slices (2/6/12/24h), then dedupe.
+- Concurrent floor prefetch with local cache for faster repeated runs.
+- Timestamped history archive on every run (no overwrite of old reports).
 - Hotness ranking focused on view/reply signals with deterministic tie-breakers.
 - Invalid-discussion filtering for low-value threads (e.g., 收资料/出资料/代课).
 - LLM summarization (OpenAI or Anthropic) with extractive fallback.
 - Markdown output for human review before posting.
 - Optional posting mode with explicit --post switch.
+- Optional post window control (`--post-at HH:MM`) to avoid accidental early posts.
 
 ## Quick Start
 
@@ -60,6 +63,9 @@ Generated files:
 - outputs/daily.md
 - outputs/holes.raw.json
 - outputs/ranked.json
+- outputs/history/YYYYMM/daily_*.md
+- outputs/history/YYYYMM/holes_*.json
+- outputs/history/YYYYMM/ranked_*.json
 
 ## Script Entry Points
 
@@ -117,7 +123,35 @@ macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-save-credentials
 See docs/scheduling.md for:
 - Linux/macOS cron at 08:00
 - Windows Task Scheduler at 08:00
+- GitHub Actions daily auto-post at 20:00 (UTC+8)
 - CronCreate prompt examples for agent-based setup
+
+Quick Windows setup (recommended):
+
+PowerShell (generate only):
+
+scripts/register_daily_task.ps1 -TaskName DanXiDailyReport -Time 08:00
+
+PowerShell (generate + publish after 08:00):
+
+scripts/register_daily_task.ps1 -TaskName DanXiDailyPublish -Time 08:00 -EnablePost
+
+Note: `-EnablePost` requires `DANXI_POST_ENDPOINT` and `DANXI_POST_TOKEN` in environment variables or `.env`.
+
+## GitHub Actions (20:00 Auto Post)
+
+This repository includes [.github/workflows/daily-post.yml](.github/workflows/daily-post.yml), which runs every day at 20:00 China time.
+
+Before enabling it, set repository secrets:
+- DANXI_POST_ENDPOINT
+- DANXI_POST_TOKEN
+- DANXI_API_TOKEN (optional, if your read endpoint requires token)
+
+Safety behavior:
+- Workflow only runs on the repository default branch.
+- Manual trigger on non-default branches will be skipped.
+
+Then enable Actions in your repository settings. You can also run it manually from the Actions tab via workflow_dispatch.
 
 ## Tests
 

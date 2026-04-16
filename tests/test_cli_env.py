@@ -118,6 +118,50 @@ class CliEnvTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_invalid_post_at_format_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".env").write_text("", encoding="utf-8")
+
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with patch.dict(os.environ, {}, clear=True):
+                    argv = [
+                        "prog",
+                        "--base-urls",
+                        "https://forum.fduhole.com/api",
+                        "--post-at",
+                        "8:00",
+                        "--webvpn-no-prompt",
+                    ]
+                    with patch("sys.argv", argv):
+                        with self.assertRaises(SystemExit):
+                            cli.main()
+            finally:
+                os.chdir(old_cwd)
+
+    def test_invalid_post_at_from_env_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".env").write_text("", encoding="utf-8")
+
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with patch.dict(os.environ, {"DANXI_POST_AT": "8:00"}, clear=True):
+                    argv = [
+                        "prog",
+                        "--base-urls",
+                        "https://forum.fduhole.com/api",
+                        "--webvpn-no-prompt",
+                    ]
+                    with patch("sys.argv", argv):
+                        with self.assertRaises(SystemExit):
+                            cli.main()
+            finally:
+                os.chdir(old_cwd)
+
     @patch("danxi_daily.cli.run_pipeline", return_value={"ok": True})
     def test_existing_webvpn_credentials_are_loaded_without_prompt(self, mock_run_pipeline) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -225,6 +269,33 @@ class CliEnvTests(unittest.TestCase):
 
         called_config = mock_run_pipeline.call_args[0][0]
         self.assertEqual(called_config.api_token, "auto-token")
+
+    @patch("danxi_daily.cli.run_pipeline", return_value={"ok": True})
+    def test_cli_passes_schedule_config_to_pipeline(self, mock_run_pipeline) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".env").write_text("", encoding="utf-8")
+
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with patch.dict(os.environ, {}, clear=True):
+                    argv = [
+                        "prog",
+                        "--base-urls",
+                        "https://forum.fduhole.com/api",
+                        "--post-at",
+                        "08:30",
+                        "--webvpn-no-prompt",
+                    ]
+                    with patch("sys.argv", argv):
+                        code = cli.main()
+                self.assertEqual(code, 0)
+            finally:
+                os.chdir(old_cwd)
+
+        called_config = mock_run_pipeline.call_args[0][0]
+        self.assertEqual(called_config.post_schedule_hhmm, "08:30")
 
 
 if __name__ == "__main__":
