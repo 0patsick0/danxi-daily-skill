@@ -385,6 +385,8 @@ def main() -> int:
         refreshed_token = _refresh_api_token(args, env_path, config.webvpn_client)
         if refreshed_token and refreshed_token != config.api_token:
             config.api_token = refreshed_token
+            # Also update post_token: same session token used for both reading and posting.
+            config.post_token = refreshed_token
             result = run_pipeline(config)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0

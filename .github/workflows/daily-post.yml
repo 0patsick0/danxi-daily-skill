@@ -56,6 +56,7 @@ jobs:
 
           # GitHub Actions runners cannot reach campus endpoints directly.
           # Use WebVPN force mode; API token auto-refreshes via WebVPN on expiry.
+          # NOTE: No --post-at gate here; the cron schedule itself controls timing.
           python scripts/generate_daily.py \
             --hours 24 \
             --top 12 \
@@ -64,7 +65,7 @@ jobs:
             --webvpn-no-prompt \
             --post \
             --post-endpoint "$DANXI_POST_ENDPOINT" \
-            --post-at 23:30
+            --verbose
 
       - name: Upload generated report artifacts
         if: always()
