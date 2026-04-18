@@ -66,9 +66,9 @@ def _local_today_start_utc_iso() -> str:
 
 
 def _effective_start_time(hours: int) -> str:
-    _ = hours
-    # Daily report should always include the entire local day window.
-    return _local_today_start_utc_iso()
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 _POST_SCHEDULE_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")

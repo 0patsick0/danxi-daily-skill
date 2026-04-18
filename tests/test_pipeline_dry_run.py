@@ -305,11 +305,13 @@ class PipelineDryRunTests(unittest.TestCase):
 
         start_dt = parse_iso8601(result["start_time"])
         self.assertIsNotNone(start_dt)
-        now_local = datetime.now().astimezone()
-        local_day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_utc = local_day_start.astimezone(timezone.utc)
         assert start_dt is not None
-        self.assertGreaterEqual(start_dt, today_start_utc)
+        # With hours=72, start_time should be about 72h ago, NOT today's midnight.
+        now_utc = datetime.now(timezone.utc)
+        from datetime import timedelta
+        expected_approx = now_utc - timedelta(hours=72)
+        # Allow 5 minute tolerance for test execution time.
+        self.assertLess(abs((start_dt - expected_approx).total_seconds()), 300)
 
     @patch("danxi_daily.pipeline.fetch_hole_floors", return_value=[])
     @patch("danxi_daily.pipeline.fetch_holes_with_fallback")
@@ -336,11 +338,12 @@ class PipelineDryRunTests(unittest.TestCase):
 
         start_dt = parse_iso8601(result["start_time"])
         self.assertIsNotNone(start_dt)
-        now_local = datetime.now().astimezone()
-        local_day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_utc = local_day_start.astimezone(timezone.utc)
         assert start_dt is not None
-        self.assertEqual(start_dt, today_start_utc)
+        # With hours=2, start_time should be about 2 hours ago.
+        now_utc = datetime.now(timezone.utc)
+        from datetime import timedelta
+        expected_approx = now_utc - timedelta(hours=2)
+        self.assertLess(abs((start_dt - expected_approx).total_seconds()), 300)
 
     @patch("danxi_daily.pipeline.fetch_hole_floors", return_value=[])
     @patch("danxi_daily.pipeline.fetch_holes_with_fallback")
