@@ -24,8 +24,24 @@ def post_markdown(
     token: str,
     content: str,
     timeout: int = 20,
+    division_id: int = 1,
 ) -> tuple[int, str]:
-    payload = {"content": content}
+    """Post a markdown report to the DanXi forum API.
+
+    Args:
+        endpoint: The POST endpoint URL (e.g. https://forum.fduhole.com/api/holes).
+        token: Bearer token for authorization.
+        content: Markdown content to post.
+        timeout: Request timeout in seconds.
+        division_id: Forum division ID to post to (default 1 = 树洞).
+
+    Returns:
+        Tuple of (HTTP status code, response body string).
+    """
+    payload = {
+        "content": content,
+        "division_id": division_id,
+    }
     req = urllib.request.Request(
         endpoint,
         method="POST",

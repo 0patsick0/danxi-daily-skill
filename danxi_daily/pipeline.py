@@ -540,6 +540,7 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
                             token=token,
                             content=report,
                             timeout=config.timeout,
+                            division_id=config.division_id or 1,
                         )
                         if status < 300:
                             write_text(config.post_dedupe_file, new_hash)
