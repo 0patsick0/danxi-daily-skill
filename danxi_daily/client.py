@@ -59,6 +59,11 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
 
 
 def _normalize_webvpn_time(value: Any) -> Any:
+    # WebVPN /holes uses time-cursor pagination, NOT integer page offsets.
+    # Integer 0 ("first page" in direct API) must become a local timestamp
+    # so WebVPN can start paging backward from the current moment.
+    if isinstance(value, int):
+        return datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
     if not isinstance(value, str):
         return value
     text = value.strip()

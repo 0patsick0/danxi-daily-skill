@@ -42,7 +42,6 @@ jobs:
           DANXI_POST_TOKEN: ${{ secrets.DANXI_POST_TOKEN }}
           DANXI_WEBVPN_USERNAME: ${{ secrets.DANXI_WEBVPN_USERNAME }}
           DANXI_WEBVPN_PASSWORD: ${{ secrets.DANXI_WEBVPN_PASSWORD }}
-          DANXI_WEBVPN_MODE: auto
           DANXI_ARCHIVE_OUTPUTS: "false"
         run: |
           if [ -z "$DANXI_POST_ENDPOINT" ] || [ -z "$DANXI_POST_TOKEN" ]; then
@@ -50,9 +49,18 @@ jobs:
             exit 1
           fi
 
+          if [ -z "$DANXI_WEBVPN_USERNAME" ] || [ -z "$DANXI_WEBVPN_PASSWORD" ]; then
+            echo "::error::Missing required secrets: DANXI_WEBVPN_USERNAME or DANXI_WEBVPN_PASSWORD"
+            exit 1
+          fi
+
+          # GitHub Actions runners cannot reach campus endpoints directly.
+          # Use WebVPN force mode; API token auto-refreshes via WebVPN on expiry.
           python scripts/generate_daily.py \
             --hours 24 \
             --top 12 \
+            --base-urls "https://forum.fduhole.com/api" \
+            --webvpn-mode force \
             --webvpn-no-prompt \
             --post \
             --post-endpoint "$DANXI_POST_ENDPOINT" \

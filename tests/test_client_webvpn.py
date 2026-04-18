@@ -134,6 +134,36 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
         self.assertEqual(params["start_time"], expected_start)
         self.assertEqual(params["offset"], expected_offset)
 
+    @patch("danxi_daily.client.should_prefer_webvpn", return_value=False)
+    @patch("danxi_daily.client._request_json")
+    def test_webvpn_fallback_converts_integer_offset_to_timestamp(self, mock_request_json, _mock_prefer) -> None:
+        """Regression: integer offset=0 must NOT be sent to WebVPN as the string '0'.
+        WebVPN /holes uses time-cursor pagination; sending offset=0 causes HTTP 400."""
+        mock_request_json.side_effect = urllib.error.URLError("timed out")
+        webvpn_client = Mock()
+        webvpn_client.request_json.return_value = [{"hole_id": 42}]
+
+        holes, _ = fetch_holes_with_fallback(
+            base_urls=["https://forum.fduhole.com/api"],
+            start_time="2026-04-15T16:00:00Z",
+            limit=10,
+            offset=0,          # integer offset — the bug case
+            division_id=None,
+            token=None,
+            webvpn_client=webvpn_client,
+        )
+
+        self.assertEqual(holes[0]["hole_id"], 42)
+        kwargs = webvpn_client.request_json.call_args.kwargs
+        params = kwargs["params"]
+        # offset must be a timestamp string, never "0" or integer 0
+        self.assertIsInstance(params["offset"], str)
+        self.assertNotEqual(params["offset"], "0")
+        self.assertNotEqual(params["offset"], 0)
+        # must match YYYY-MM-DDTHH:MM:SS format
+        import re
+        self.assertRegex(params["offset"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+
 
 class WebvpnUrlTranslationTests(unittest.TestCase):
     def test_translate_to_webvpn_for_forum_host(self) -> None:
