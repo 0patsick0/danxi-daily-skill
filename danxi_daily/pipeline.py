@@ -541,6 +541,7 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
                             content=report,
                             timeout=config.timeout,
                             division_id=config.division_id or 1,
+                            webvpn_client=config.webvpn_client if prefer_webvpn_for_floors else None,
                         )
                         if status < 300:
                             write_text(config.post_dedupe_file, new_hash)
