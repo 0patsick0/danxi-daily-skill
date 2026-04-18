@@ -40,7 +40,7 @@ Fix:
 - cd to project root and run:
   python scripts/generate_daily.py
 
-## 6) Token seems ignored
+## 5) Token seems ignored
 
 Cause:
 - Token passed by CLI argument (unsupported).
@@ -50,7 +50,7 @@ Fix:
   - DANXI_API_TOKEN
   - DANXI_POST_TOKEN
 
-## 5) Empty report
+## 6) Empty report
 
 Cause:
 - No recent holes in selected time window or division.

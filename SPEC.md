@@ -30,12 +30,12 @@ Pipeline:
 ## Ranking Formula
 
 hot_score =
-- view * 0.03
-- reply * 1.6
-- likes * 2.4
-- recency_factor * 3.2
+- view * 0.08
+- reply * 5.0
+- likes * 1.0
+- recency_factor * 1.5
 
-recency_factor uses exponential decay with 12h half-life.
+recency_factor uses exponential decay with 16h half-life.
 
 ## Failure Handling
 

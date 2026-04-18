@@ -34,17 +34,24 @@ def build_daily_markdown(
         return "\n".join(lines) + "\n"
 
     for idx, post in enumerate(posts, start=1):
-        lines.extend(
-            [
-                f"No.{idx} #{post.hole_id}",
-                f"- 🔥 热度指数：{post.hot_score:.3f}",
-                f"- 👀 浏览：{post.view} ｜ 💬 回复：{post.reply} ｜ 👍 点赞：{post.like_sum}",
-                "",
-            ]
-        )
+        excerpt_line = ""
+        if post.excerpt and post.excerpt.strip():
+            excerpt_line = f"- 📝 摘要：{post.excerpt}"
+
+        entry = [
+            f"### No.{idx} #{post.hole_id}",
+            f"- 🔥 热度指数：{post.hot_score:.2f}",
+            f"- 👀 浏览：{post.view} ｜ 💬 回复：{post.reply} ｜ 👍 点赞：{post.like_sum}",
+        ]
+        if excerpt_line:
+            entry.append(excerpt_line)
+        entry.append("")
+        lines.extend(entry)
 
     lines.extend(
         [
+            "---",
+            "",
             "## 📮 结语",
             "以上就是今天的旦夕热点，欢迎在评论区分享你的看法。",
             "",

@@ -42,24 +42,26 @@ Create a daily scheduled task at 08:00 local time to run:
 python scripts/generate_daily.py --hours 24 --top 12
 in the danxi-daily project root, and write logs to outputs/cron.log.
 
-## Option D: GitHub Actions (20:00 daily auto post)
+## Option D: GitHub Actions (23:30 daily auto post)
 
 Workflow file:
 
 .github/workflows/daily-post.yml
 
 Schedule:
-- 20:00 China Standard Time (UTC+8)
-- Cron in GitHub Actions is UTC, so it uses: `0 12 * * *`
+- 23:30 China Standard Time (UTC+8)
+- Cron in GitHub Actions is UTC, so it uses: `30 15 * * *`
 
 Required repository secrets:
 - DANXI_POST_ENDPOINT
 - DANXI_POST_TOKEN
 - DANXI_API_TOKEN (optional)
+- DANXI_WEBVPN_USERNAME (optional, for auto token refresh)
+- DANXI_WEBVPN_PASSWORD (optional, for auto token refresh)
 
 Behavior:
-- Runs `scripts/generate_daily.py` with `--post` and `--post-at 20:00`
-- Keeps WebVPN disabled for non-interactive CI execution
+- Runs `scripts/generate_daily.py` with `--post` and `--post-at 23:30`
+- Uses WebVPN auto mode for token refresh in CI
 - Uploads `outputs/daily.md`, `outputs/ranked.json`, `outputs/holes.raw.json` as artifacts
 - Only runs on the repository default branch (manual runs on other branches are skipped)
 

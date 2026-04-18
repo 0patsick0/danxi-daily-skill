@@ -139,7 +139,7 @@ def fetch_holes_with_fallback(
                     continue
 
         if force_webvpn:
-                continue
+            continue
 
         try:
             payload = _request_json(url, params=params, token=token, timeout=timeout)

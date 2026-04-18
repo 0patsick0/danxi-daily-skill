@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    # 20:00 China Standard Time (UTC+8) = 12:00 UTC
-    - cron: "0 12 * * *"
+    # 23:30 China Standard Time (UTC+8) = 15:30 UTC
+    - cron: "30 15 * * *"
   workflow_dispatch:
 
 jobs:
@@ -40,6 +40,9 @@ jobs:
           DANXI_API_TOKEN: ${{ secrets.DANXI_API_TOKEN }}
           DANXI_POST_ENDPOINT: ${{ secrets.DANXI_POST_ENDPOINT }}
           DANXI_POST_TOKEN: ${{ secrets.DANXI_POST_TOKEN }}
+          DANXI_WEBVPN_USERNAME: ${{ secrets.DANXI_WEBVPN_USERNAME }}
+          DANXI_WEBVPN_PASSWORD: ${{ secrets.DANXI_WEBVPN_PASSWORD }}
+          DANXI_WEBVPN_MODE: auto
           DANXI_ARCHIVE_OUTPUTS: "false"
         run: |
           if [ -z "$DANXI_POST_ENDPOINT" ] || [ -z "$DANXI_POST_TOKEN" ]; then
@@ -50,11 +53,10 @@ jobs:
           python scripts/generate_daily.py \
             --hours 24 \
             --top 12 \
-            --webvpn-mode off \
             --webvpn-no-prompt \
             --post \
             --post-endpoint "$DANXI_POST_ENDPOINT" \
-            --post-at 20:00
+            --post-at 23:30
 
       - name: Upload generated report artifacts
         if: always()
