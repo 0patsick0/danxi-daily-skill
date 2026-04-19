@@ -5,9 +5,9 @@ permissions:
 
 on:
   schedule:
-    # 23:37 China Standard Time (UTC+8) = 15:37 UTC
-    # 避开半点高峰期，减少 GitHub Actions 排队延迟
-    - cron: "37 15 * * *"
+    # 22:12 China Standard Time (UTC+8) = 14:12 UTC
+    # 避开半点、整点高峰期，减少 GitHub Actions 排队延迟
+    - cron: "12 14 * * *"
   workflow_dispatch:
 
 jobs:
