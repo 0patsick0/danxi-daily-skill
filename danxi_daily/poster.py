@@ -71,6 +71,15 @@ def post_markdown(
         try:
             webvpn_client._ensure_authenticated()
             body, _ = webvpn_client._open(req, timeout=timeout)
+            
+            # If WebVPN session died during the long generation process, it returns the login page (200 OK)
+            if "资源访问控制系统" in body and "<html" in body:
+                webvpn_client._authenticated = False
+                webvpn_client._ensure_authenticated()
+                body, _ = webvpn_client._open(req, timeout=timeout)
+                if "资源访问控制系统" in body and "<html" in body:
+                    return 401, "WebVPN session expired and re-authentication failed"
+                    
             return 200, body  # WebVPN _open doesn't return status directly but raises HTTPError on >=400
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", errors="replace")
