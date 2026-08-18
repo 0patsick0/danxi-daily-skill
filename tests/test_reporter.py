@@ -21,7 +21,7 @@ class ReporterFormatTests(unittest.TestCase):
         )
 
     def test_build_daily_markdown_basic_structure(self) -> None:
-        text = build_daily_markdown([self._make_post()])
+        text = build_daily_markdown([self._make_post()], shop_ad_interval_days=1)
 
         self.assertIn("今日热门话题", text)
         self.assertIn("#123456", text)
@@ -33,6 +33,8 @@ class ReporterFormatTests(unittest.TestCase):
         self.assertNotIn("摘要", text)
         self.assertNotIn("话题解读", text)
         # No English headers
+        self.assertIn("ai小店:[https://pay.ldxp.cn/shop/Q14UBAR8]", text)
+        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/Q14UBAR8]")
         self.assertNotIn("Generated at", text)
         self.assertNotIn("Hot Posts", text)
 
@@ -55,6 +57,31 @@ class ReporterFormatTests(unittest.TestCase):
         text = build_daily_markdown([])
 
         self.assertIn("暂未抓取到符合条件", text)
+    def test_build_daily_markdown_empty_case(self) -> None:
+        text = build_daily_markdown([], shop_ad_interval_days=1)
+
+        self.assertIn("暂未抓取到符合条件", text)
+        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/Q14UBAR8]")
+
+    def test_shop_ad_is_optional(self) -> None:
+        posts = [
+            RankedPost(
+                hole_id=123456,
+                division_id=1,
+                time_created="2026-04-14T08:00:00+08:00",
+                time_updated="2026-04-14T10:00:00+08:00",
+                reply=21,
+                view=860,
+                like_sum=14,
+                hot_score=98.1234,
+                excerpt="摘录",
+                summary="总结",
+            )
+        ]
+
+        text = build_daily_markdown(posts, shop_ad_interval_days=0)
+
+        self.assertNotIn("ai小店:", text)
 
 
 if __name__ == "__main__":
