@@ -21,7 +21,7 @@ class ReporterFormatTests(unittest.TestCase):
         )
 
     def test_build_daily_markdown_basic_structure(self) -> None:
-        text = build_daily_markdown([self._make_post()], shop_ad_interval_days=1)
+        text = build_daily_markdown([self._make_post()])
 
         self.assertIn("今日热门话题", text)
         self.assertIn("#123456", text)
@@ -33,8 +33,8 @@ class ReporterFormatTests(unittest.TestCase):
         self.assertNotIn("摘要", text)
         self.assertNotIn("话题解读", text)
         # No English headers
-        self.assertIn("ai小店:[https://pay.ldxp.cn/shop/Q14UBAR8]", text)
-        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/Q14UBAR8]")
+        self.assertIn("ai小店:[https://pay.ldxp.cn/shop/MYCGV9EW]", text)
+        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/MYCGV9EW]")
         self.assertNotIn("Generated at", text)
         self.assertNotIn("Hot Posts", text)
 
@@ -57,11 +57,7 @@ class ReporterFormatTests(unittest.TestCase):
         text = build_daily_markdown([])
 
         self.assertIn("暂未抓取到符合条件", text)
-    def test_build_daily_markdown_empty_case(self) -> None:
-        text = build_daily_markdown([], shop_ad_interval_days=1)
-
-        self.assertIn("暂未抓取到符合条件", text)
-        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/Q14UBAR8]")
+        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/MYCGV9EW]")
 
     def test_shop_ad_is_optional(self) -> None:
         posts = [
