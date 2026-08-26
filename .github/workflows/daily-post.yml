@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    # 20:00 China Standard Time (UTC+8) = 12:00 UTC
-    - cron: "0 12 * * *"
+    # 22:00 China Standard Time (UTC+8) = 14:00 UTC
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 jobs:

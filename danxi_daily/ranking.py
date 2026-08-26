@@ -69,6 +69,31 @@ def _passes_engagement_gate(view_count: int, reply_count: int) -> bool:
     return False
 
 
+# Minimum sampled floors required before we trust a diversity signal.
+_MIN_DIVERSITY_SAMPLE = 5
+# Reply weight is discounted to at least this fraction when all sampled
+# replies come from a single speaker (uniq_ratio -> 0).
+_DIVERSITY_BASE_DISCOUNT = 0.4
+
+
+def _speaker_diversity_ratio(floors: list[dict[str, Any]]) -> float | None:
+    """Return unique-speaker ratio from sampled floors, or None if under-sampled."""
+    if len(floors) < _MIN_DIVERSITY_SAMPLE:
+        return None
+    speakers = [f.get("anonyname") for f in floors if isinstance(f.get("anonyname"), str) and f.get("anonyname")]
+    if not speakers:
+        return None
+    return len(set(speakers)) / len(floors)
+
+
+def _effective_reply_count(reply_count: int, diversity_ratio: float | None) -> float:
+    # Without enough sampled floors we have no diversity signal, so don't discount.
+    if diversity_ratio is None:
+        return float(reply_count)
+    discount = _DIVERSITY_BASE_DISCOUNT + (1.0 - _DIVERSITY_BASE_DISCOUNT) * diversity_ratio
+    return reply_count * discount
+
+
 def rank_holes(
     holes: list[dict[str, Any]],
     source_endpoint: str,
@@ -97,9 +122,12 @@ def rank_holes(
         if not _passes_engagement_gate(view_count, reply_count):
             continue
 
+        diversity_ratio = _speaker_diversity_ratio(floors)
+        effective_reply = _effective_reply_count(reply_count, diversity_ratio)
+
         score = (
             (view_count * weight_view)
-            + (reply_count * weight_reply)
+            + (effective_reply * weight_reply)
             + (like_sum * weight_like)
             + (recency_factor(raw_hole.get("time_updated"), half_life_hours) * weight_recency)
         )
