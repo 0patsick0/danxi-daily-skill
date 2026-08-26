@@ -8,6 +8,11 @@ on:
     # 22:00 China Standard Time (UTC+8) = 14:00 UTC
     - cron: "0 14 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Generate report only, skip posting"
+        type: boolean
+        default: false
 
 jobs:
   auto-post:
@@ -43,12 +48,8 @@ jobs:
           DANXI_WEBVPN_USERNAME: ${{ secrets.DANXI_WEBVPN_USERNAME }}
           DANXI_WEBVPN_PASSWORD: ${{ secrets.DANXI_WEBVPN_PASSWORD }}
           DANXI_ARCHIVE_OUTPUTS: "false"
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
-          if [ -z "$DANXI_POST_ENDPOINT" ] || [ -z "$DANXI_POST_TOKEN" ]; then
-            echo "::error::Missing required secrets: DANXI_POST_ENDPOINT or DANXI_POST_TOKEN"
-            exit 1
-          fi
-
           if [ -z "$DANXI_WEBVPN_USERNAME" ] || [ -z "$DANXI_WEBVPN_PASSWORD" ]; then
             echo "::error::Missing required secrets: DANXI_WEBVPN_USERNAME or DANXI_WEBVPN_PASSWORD"
             exit 1
@@ -57,15 +58,26 @@ jobs:
           # GitHub Actions runners cannot reach campus endpoints directly.
           # Use WebVPN force mode; API token auto-refreshes via WebVPN on expiry.
           # NOTE: No --post-at gate here; the cron schedule itself controls timing.
-          python scripts/generate_daily.py \
-            --hours 24 \
-            --top 12 \
-            --base-urls "https://forum.fduhole.com/api" \
-            --webvpn-mode force \
-            --webvpn-no-prompt \
-            --post \
-            --post-endpoint "$DANXI_POST_ENDPOINT" \
+          args=(
+            --hours 24
+            --top 12
+            --base-urls "https://forum.fduhole.com/api"
+            --webvpn-mode force
+            --webvpn-no-prompt
             --verbose
+          )
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: generating report only, skipping post."
+          else
+            if [ -z "$DANXI_POST_ENDPOINT" ] || [ -z "$DANXI_POST_TOKEN" ]; then
+              echo "::error::Missing required secrets: DANXI_POST_ENDPOINT or DANXI_POST_TOKEN"
+              exit 1
+            fi
+            args+=(--post --post-endpoint "$DANXI_POST_ENDPOINT")
+          fi
+
+          python scripts/generate_daily.py "${args[@]}"
 
       - name: Upload generated report artifacts
         if: always()
