@@ -1,7 +1,7 @@
 name: DanXi Daily Auto Post
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   schedule:
@@ -78,6 +78,21 @@ jobs:
           fi
 
           python scripts/generate_daily.py "${args[@]}"
+
+      - name: Persist dedupe state
+        if: success()
+        run: |
+          # last_post.sha256 is committed to the repo so duplicate-post
+          # detection survives across CI runs (each run gets a fresh checkout).
+          if [ -n "$(git status --porcelain outputs/last_post.sha256 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add outputs/last_post.sha256
+            git commit -m "chore: update post dedupe state [skip ci]"
+            git push
+          else
+            echo "No dedupe state change to persist."
+          fi
 
       - name: Upload generated report artifacts
         if: always()

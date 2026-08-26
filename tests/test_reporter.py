@@ -71,7 +71,6 @@ class ReporterFormatTests(unittest.TestCase):
                 like_sum=14,
                 hot_score=98.1234,
                 excerpt="摘录",
-                summary="总结",
             )
         ]
 

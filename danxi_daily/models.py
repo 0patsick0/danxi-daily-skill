@@ -17,7 +17,6 @@ class RankedPost:
     like_sum: int
     hot_score: float
     excerpt: str
-    summary: str = ""
     source_endpoint: str = ""
     floors_count: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
