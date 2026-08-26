@@ -5,7 +5,7 @@ import urllib.error
 import unittest
 from unittest.mock import Mock, patch
 
-from danxi_daily.client import fetch_holes_with_fallback
+from danxi_daily.client import fetch_hole_floors, fetch_holes_with_fallback
 from danxi_daily.webvpn import translate_to_webvpn
 
 
@@ -163,6 +163,130 @@ class ClientWebvpnFallbackTests(unittest.TestCase):
         # must match YYYY-MM-DDTHH:MM:SS format
         import re
         self.assertRegex(params["offset"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+
+
+class FetchHoleFloorsPaginationTests(unittest.TestCase):
+    """The forum API caps a single /floors response at 10 items regardless of
+    the requested "size". fetch_hole_floors must page through offset to
+    collect the full requested amount."""
+
+    @patch("danxi_daily.client._request_json")
+    def test_pages_until_requested_size_is_collected(self, mock_request_json) -> None:
+        # Server always caps each page at 10 items, no matter what size is requested.
+        page1 = [{"id": i} for i in range(10)]
+        page2 = [{"id": i} for i in range(10, 20)]
+        page3 = [{"id": i} for i in range(20, 25)]  # short page: signals end of data
+        mock_request_json.side_effect = [page1, page2, page3]
+
+        floors = fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=40,
+        )
+
+        self.assertEqual(len(floors), 25)
+        self.assertEqual([f["id"] for f in floors], list(range(25)))
+        self.assertEqual(mock_request_json.call_count, 3)
+
+        offsets = [call.kwargs["params"]["offset"] for call in mock_request_json.call_args_list]
+        self.assertEqual(offsets, [0, 10, 20])
+        sizes = [call.kwargs["params"]["size"] for call in mock_request_json.call_args_list]
+        self.assertEqual(sizes, [10, 10, 10])
+
+    @patch("danxi_daily.client._request_json")
+    def test_stops_early_when_full_page_returned_but_size_reached(self, mock_request_json) -> None:
+        mock_request_json.return_value = [{"id": i} for i in range(10)]
+
+        floors = fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=10,
+        )
+
+        self.assertEqual(len(floors), 10)
+        self.assertEqual(mock_request_json.call_count, 1)
+
+    @patch("danxi_daily.client._request_json")
+    def test_stops_when_page_returns_empty(self, mock_request_json) -> None:
+        page1 = [{"id": i} for i in range(10)]
+        mock_request_json.side_effect = [page1, []]
+
+        floors = fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=40,
+        )
+
+        self.assertEqual(len(floors), 10)
+        self.assertEqual(mock_request_json.call_count, 2)
+
+    @patch("danxi_daily.client._request_json")
+    def test_never_requests_page_size_above_ten(self, mock_request_json) -> None:
+        mock_request_json.return_value = [{"id": i} for i in range(3)]
+
+        fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=100,
+        )
+
+        sizes = [call.kwargs["params"]["size"] for call in mock_request_json.call_args_list]
+        self.assertTrue(all(s <= 10 for s in sizes))
+
+    def test_webvpn_force_mode_paginates_through_webvpn_client(self) -> None:
+        webvpn_client = Mock()
+        page1 = [{"id": i} for i in range(10)]
+        page2 = [{"id": i} for i in range(10, 15)]
+        webvpn_client.request_json.side_effect = [page1, page2]
+
+        floors = fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=40,
+            webvpn_client=webvpn_client,
+            force_webvpn=True,
+        )
+
+        self.assertEqual(len(floors), 15)
+        self.assertEqual(webvpn_client.request_json.call_count, 2)
+
+    @patch("danxi_daily.client._request_json")
+    def test_direct_failure_falls_back_to_webvpn_pagination(self, mock_request_json) -> None:
+        mock_request_json.side_effect = urllib.error.URLError("timed out")
+        webvpn_client = Mock()
+        page1 = [{"id": i} for i in range(10)]
+        page2 = [{"id": i} for i in range(10, 12)]
+        webvpn_client.request_json.side_effect = [page1, page2]
+
+        floors = fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=40,
+            webvpn_client=webvpn_client,
+        )
+
+        self.assertEqual(len(floors), 12)
+        self.assertEqual(webvpn_client.request_json.call_count, 2)
+
+    @patch("danxi_daily.client._request_json")
+    def test_returns_empty_list_when_all_paths_fail(self, mock_request_json) -> None:
+        mock_request_json.side_effect = urllib.error.URLError("timed out")
+
+        floors = fetch_hole_floors(
+            base_url="https://forum.fduhole.com/api",
+            hole_id=123,
+            token=None,
+            size=40,
+            webvpn_client=None,
+        )
+
+        self.assertEqual(floors, [])
 
 
 class WebvpnUrlTranslationTests(unittest.TestCase):

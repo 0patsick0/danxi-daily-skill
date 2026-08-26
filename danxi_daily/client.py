@@ -171,6 +171,52 @@ def fetch_holes_with_fallback(
     raise RuntimeError("; ".join(errors) if errors else "all endpoints failed")
 
 
+# The forum API silently caps a single /floors response at this many items,
+# regardless of the requested "size". Page through offset to collect more.
+_FLOORS_PAGE_SIZE_CAP = 10
+
+
+def _fetch_floors_page(
+    url: str,
+    offset: int,
+    page_size: int,
+    token: str | None,
+    timeout: int,
+    webvpn_client: WebVPNClient | None,
+    use_webvpn: bool,
+) -> list[dict[str, Any]]:
+    params = {"offset": offset, "size": page_size}
+    if use_webvpn:
+        payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)  # type: ignore[union-attr]
+    else:
+        payload = _request_json(url, params=params, token=token, timeout=timeout)
+    return _extract_items(payload)
+
+
+def _paginate_floors(
+    url: str,
+    size: int,
+    token: str | None,
+    timeout: int,
+    webvpn_client: WebVPNClient | None,
+    use_webvpn: bool,
+) -> list[dict[str, Any]]:
+    collected: list[dict[str, Any]] = []
+    offset = 0
+    page_size = max(1, min(size, _FLOORS_PAGE_SIZE_CAP))
+
+    while len(collected) < size:
+        page = _fetch_floors_page(url, offset, page_size, token, timeout, webvpn_client, use_webvpn)
+        if not page:
+            break
+        collected.extend(page)
+        offset += len(page)
+        if len(page) < page_size:
+            break
+
+    return collected[:size]
+
+
 def fetch_hole_floors(
     base_url: str,
     hole_id: int,
@@ -181,12 +227,10 @@ def fetch_hole_floors(
     force_webvpn: bool = False,
 ) -> list[dict[str, Any]]:
     clean_base = base_url.rstrip("/")
-    params = {"offset": 0, "size": size}
     url = f"{clean_base}/holes/{hole_id}/floors"
     if webvpn_client is not None and force_webvpn:
         try:
-            payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
-            return _extract_items(payload)
+            return _paginate_floors(url, size, token, timeout, webvpn_client, use_webvpn=True)
         except (
             WebVPNError,
             WebVPNAuthError,
@@ -199,13 +243,11 @@ def fetch_hole_floors(
             return []
 
     try:
-        payload = _request_json(url, params=params, token=token, timeout=timeout)
-        return _extract_items(payload)
+        return _paginate_floors(url, size, token, timeout, webvpn_client, use_webvpn=False)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
         if webvpn_client is not None:
             try:
-                payload = webvpn_client.request_json(url, params=params, token=token, timeout=timeout)
-                return _extract_items(payload)
+                return _paginate_floors(url, size, token, timeout, webvpn_client, use_webvpn=True)
             except (WebVPNError, WebVPNAuthError, urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
                 return []
         return []
