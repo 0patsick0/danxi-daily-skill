@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    # 22:00 China Standard Time (UTC+8) = 14:00 UTC
-    - cron: "0 14 * * *"
+    # 21:30 China Standard Time (UTC+8) = 13:30 UTC
+    - cron: "30 13 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
