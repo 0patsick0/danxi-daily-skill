@@ -53,11 +53,11 @@ def post_markdown(
     
     if webvpn_client:
         # Proxy through WebVPN
-        from danxi_daily.webvpn import translate_to_webvpn
+        from danxi_daily.webvpn import WEBVPN_HOST, translate_to_webvpn
         proxied_url = translate_to_webvpn(endpoint, allowed_hosts=webvpn_client.allowed_hosts)
         if not proxied_url:
             raise ValueError(f"post endpoint {endpoint} is not supported by webvpn")
-        
+
         req = urllib.request.Request(
             proxied_url,
             method="POST",
@@ -68,18 +68,28 @@ def post_markdown(
             },
             data=json.dumps(payload).encode("utf-8"),
         )
+
+        def _session_expired(body: str, final_url: str) -> bool:
+            # If WebVPN session died during the long generation process, it silently
+            # redirects to the CAS login page instead of raising an HTTP error.
+            # Prefer the redirect target — the same signal webvpn.py's request_json()
+            # uses — and fall back to a content sniff in case the login page URL
+            # ever changes shape.
+            if final_url.startswith(f"https://{WEBVPN_HOST}/login"):
+                return True
+            return "资源访问控制系统" in body and "<html" in body
+
         try:
             webvpn_client._ensure_authenticated()
-            body, _ = webvpn_client._open(req, timeout=timeout)
-            
-            # If WebVPN session died during the long generation process, it returns the login page (200 OK)
-            if "资源访问控制系统" in body and "<html" in body:
+            body, final_url = webvpn_client._open(req, timeout=timeout)
+
+            if _session_expired(body, final_url):
                 webvpn_client._authenticated = False
                 webvpn_client._ensure_authenticated()
-                body, _ = webvpn_client._open(req, timeout=timeout)
-                if "资源访问控制系统" in body and "<html" in body:
+                body, final_url = webvpn_client._open(req, timeout=timeout)
+                if _session_expired(body, final_url):
                     return 401, "WebVPN session expired and re-authentication failed"
-                    
+
             return 200, body  # WebVPN _open doesn't return status directly but raises HTTPError on >=400
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", errors="replace")
