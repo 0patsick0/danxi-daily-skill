@@ -6,13 +6,12 @@ permissions:
 on:
   # GitHub's built-in `schedule:` trigger fired ~9.5 hours late every night
   # this was tested at evening times (22:00, 21:30, 21:23 CST on 2026-08-26
-  # through 2026-08-28). Trying a morning slot (08:40 CST) instead, since the
-  # delay may be tied to GitHub's evening/off-peak processing window rather
-  # than being time-of-day independent. If this also drifts, fall back to
+  # through 2026-08-28). Trying 20:40 CST next to narrow down whether the
+  # delay is specific to certain hours. If this also drifts, fall back to
   # the external cron + workflow_dispatch approach documented in
   # docs/scheduling.md.
   schedule:
-    - cron: "40 0 * * *" # 08:40 China Standard Time (UTC+8)
+    - cron: "40 12 * * *" # 20:40 China Standard Time (UTC+8)
   workflow_dispatch:
     inputs:
       dry_run:
