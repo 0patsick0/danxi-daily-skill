@@ -4,14 +4,15 @@ permissions:
   contents: write
 
 on:
-  # GitHub's built-in `schedule:` trigger fired ~9.5 hours late every night
-  # this was tested at evening times (22:00, 21:30, 21:23 CST on 2026-08-26
-  # through 2026-08-28). Trying 20:40 CST next to narrow down whether the
-  # delay is specific to certain hours. If this also drifts, fall back to
-  # the external cron + workflow_dispatch approach documented in
-  # docs/scheduling.md.
-  schedule:
-    - cron: "40 12 * * *" # 20:40 China Standard Time (UTC+8)
+  # GitHub's built-in `schedule:` trigger was tested at 22:00, 21:30, 21:23,
+  # and 20:40 CST between 2026-08-26 and 2026-08-29 and consistently fired
+  # ~9.5 hours late (always landing around 07:00 CST the next morning)
+  # regardless of the configured time. Triggering is now handled by an
+  # external cron service that calls the GitHub REST API to dispatch this
+  # workflow at the exact intended time:
+  #   POST /repos/{owner}/{repo}/actions/workflows/daily-post.yml/dispatches
+  #   body: {"ref": "main"}
+  # See docs/scheduling.md (Option D) for setup steps.
   workflow_dispatch:
     inputs:
       dry_run:
