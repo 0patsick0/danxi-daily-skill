@@ -42,15 +42,15 @@ Create a daily scheduled task at 08:00 local time to run:
 python scripts/generate_daily.py --hours 24 --top 12
 in the danxi-daily project root, and write logs to outputs/cron.log.
 
-## Option D: GitHub Actions (22:00 daily auto post)
+## Option D: GitHub Actions (20:39 daily auto post)
 
 Workflow file:
 
 .github/workflows/daily-post.yml
 
 Schedule:
-- 22:00 China Standard Time (UTC+8)
-- Cron in GitHub Actions is UTC, so it uses: `0 14 * * *`
+- 20:39 China Standard Time (UTC+8)
+- Cron in GitHub Actions is UTC, so it uses: `39 12 * * *`
 
 Required repository secrets:
 - DANXI_POST_ENDPOINT
