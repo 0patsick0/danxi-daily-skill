@@ -123,7 +123,7 @@ macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-save-credentials
 See docs/scheduling.md for:
 - Linux/macOS cron at 08:00
 - Windows Task Scheduler at 08:00
-- GitHub Actions daily auto-post at 20:39 (UTC+8)
+- GitHub Actions daily auto-post at 22:12 (UTC+8)
 - CronCreate prompt examples for agent-based setup
 
 Quick Windows setup (recommended):
@@ -138,9 +138,9 @@ scripts/register_daily_task.ps1 -TaskName DanXiDailyPublish -Time 08:00 -EnableP
 
 Note: `-EnablePost` requires `DANXI_POST_ENDPOINT` and `DANXI_POST_TOKEN` in environment variables or `.env`.
 
-## GitHub Actions (20:39 Auto Post)
+## GitHub Actions (22:12 Auto Post)
 
-This repository includes [.github/workflows/daily-post.yml](.github/workflows/daily-post.yml), which runs every day at 20:39 China time.
+This repository includes [.github/workflows/daily-post.yml](.github/workflows/daily-post.yml), which runs every day at 22:12 China time.
 
 Before enabling it, set repository secrets:
 - DANXI_POST_ENDPOINT

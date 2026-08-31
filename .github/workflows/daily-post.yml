@@ -5,8 +5,9 @@ permissions:
 
 on:
   schedule:
-    # 20:39 China Standard Time (UTC+8) = 12:39 UTC
-    - cron: "39 12 * * *"
+    # 22:12 China Standard Time (UTC+8) = 14:12 UTC
+    # Off peak hours to reduce GitHub Actions queue delay
+    - cron: "12 14 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
