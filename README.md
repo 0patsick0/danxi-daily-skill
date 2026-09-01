@@ -138,9 +138,9 @@ scripts/register_daily_task.ps1 -TaskName DanXiDailyPublish -Time 08:00 -EnableP
 
 Note: `-EnablePost` requires `DANXI_POST_ENDPOINT` and `DANXI_POST_TOKEN` in environment variables or `.env`.
 
-## GitHub Actions (22:12 Auto Post)
+## GitHub Actions (20:17 Auto Post)
 
-This repository includes [.github/workflows/daily-post.yml](.github/workflows/daily-post.yml), which runs every day at 22:12 China time.
+This repository includes [.github/workflows/daily-post.yml](.github/workflows/daily-post.yml), which runs every day at 20:17 China time.
 
 Before enabling it, set repository secrets:
 - DANXI_POST_ENDPOINT
