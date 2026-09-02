@@ -122,7 +122,7 @@ macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-save-credentials
 
 GitHub's native `schedule:` trigger is not a reliable clock. Keep GitHub
 Actions as the **runner**. The production clock is **cloud-side** (Grok
-automation at 20:17 / 21:30 Asia/Shanghai), not this PC.
+automation at 22:00 / 22:30 Asia/Shanghai), not this PC.
 
 Manual dispatch:
 

@@ -11,9 +11,9 @@ on:
   # cron (Windows Task Scheduler / cron-job.org). Do not keep tweaking
   # the cron minute — delay here is platform-side, not a config bug.
   schedule:
-    - cron: "17 12 * * *"  # 20:17 CST target
-    - cron: "47 13 * * *"  # 21:47 CST catch-up
-    - cron: "17 15 * * *"  # 23:17 CST last-chance
+    - cron: "0 14 * * *"   # 22:00 CST target
+    - cron: "20 14 * * *"  # 22:20 CST catch-up
+    - cron: "0 15 * * *"   # 23:00 CST last-chance
   workflow_dispatch:
     inputs:
       dry_run:

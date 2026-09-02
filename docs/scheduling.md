@@ -8,10 +8,11 @@ The runner stays GitHub Actions. The **clock must be cloud-side**, not this
 PC.
 
 ```
-20:17 CST  Grok automation (primary cloud clock)
-21:30 CST  Grok automation (catch-up)
-20:17/21:30 CST  Cloudflare Worker cron (optional second cloud clock)
-20:17/21:47/23:17 CST  GitHub schedule (last resort only)
+22:00 CST  Cloudflare Worker cron (primary)
+22:20 CST  Cloudflare Worker catch-up
+22:00 CST  Grok automation (backup)
+22:30 CST  Grok automation catch-up
+22:00/22:20/23:00 CST  GitHub schedule (last resort)
          |
          v
 GitHub Actions  --post --post-once-per-day
@@ -25,8 +26,8 @@ Asia/Shanghai calendar day.
 
 Runs on xAI, not on this PC.
 
-- `danxi-daily-dispatch` at **20:17 Asia/Shanghai**
-- `danxi-daily-dispatch-catchup` at **21:30 Asia/Shanghai**
+- `danxi-daily-dispatch` at **22:00 Asia/Shanghai**
+- `danxi-daily-dispatch-catchup` at **22:30 Asia/Shanghai**
 - Dispatches `DanXi Daily Auto Post` on `0patsick0/danxi-daily-skill`
 - Skips if `outputs/last_post_slot.txt` is already today's date
 - Emails on failure

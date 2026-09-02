@@ -63,7 +63,7 @@ Fix:
 This is usually two separate problems. Check the Actions tab for the
 calendar day in UTC+8 before changing cron minutes.
 
-### A) No run at all around 20:17 CST
+### A) No run at all around 22:00 CST
 
 Cause:
 - GitHub native `schedule:` is best-effort. This repo has seen 9+ hour
