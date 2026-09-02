@@ -1,10 +1,15 @@
 const DISPATCH_URL =
   "https://api.github.com/repos/0patsick0/danxi-daily-skill/actions/workflows/daily-post.yml/dispatches";
 
-async function dispatch(env) {
+async function dispatch(env, { dryRun = false } = {}) {
   const token = env.GITHUB_DISPATCH_TOKEN;
   if (!token) {
     throw new Error("GITHUB_DISPATCH_TOKEN is not set");
+  }
+
+  const payload = { ref: "main" };
+  if (dryRun) {
+    payload.inputs = { dry_run: "true" };
   }
 
   const response = await fetch(DISPATCH_URL, {
@@ -16,7 +21,7 @@ async function dispatch(env) {
       "User-Agent": "danxi-daily-cloud-clock",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ ref: "main" }),
+    body: JSON.stringify(payload),
   });
 
   if (response.status !== 204) {
@@ -35,9 +40,10 @@ export default {
     if (!expected || auth !== `Bearer ${expected}`) {
       return new Response("forbidden\n", { status: 403 });
     }
+    const dryRun = new URL(request.url).searchParams.get("dry_run") === "true";
     try {
-      await dispatch(env);
-      return new Response("dispatched\n", { status: 200 });
+      await dispatch(env, { dryRun });
+      return new Response(dryRun ? "dispatched dry_run\n" : "dispatched\n", { status: 200 });
     } catch (error) {
       return new Response(String(error), { status: 500 });
     }
