@@ -11,32 +11,87 @@ repository it has:
 Do **not** keep changing the cron minute. That does not fix platform delay,
 and it resets GitHub's scheduler state.
 
-The runner stays GitHub Actions. The **clock** must be external.
+**Never-miss setup = independent clocks + one-post-per-day + failure issue.**
+The runner stays GitHub Actions. At least one clock must live *outside*
+GitHub's scheduler.
 
-## Recommended: Windows Task Scheduler dispatches GitHub Actions
+```
+20:17  Clock A: this PC (Task Scheduler)  -->  workflow_dispatch
+20:17  Clock B: cron-job.org (cloud)      -->  workflow_dispatch
+21:30  Clock A catch-up
+22:45  Clock A catch-up
+20:17/21:47/23:17  Clock C: GitHub cron (last resort)
+                    |
+                    v
+         GitHub Actions job
+         --post --post-once-per-day
+         on failure: open a GitHub issue
+```
 
-This is the reliable path on the development PC. At 20:17 local time it
-calls `gh workflow run`, which starts immediately (unlike `schedule:`).
+Overlapping fires are safe: `dispatch_daily.ps1 -OnlyIfMissed` skips when
+`outputs/last_post_slot.txt` is already today's CST date, and the workflow
+also refuses a second post the same local day.
+
+## Clock A (required): Windows Task Scheduler
+
+Calls `gh workflow run` immediately. Does not wait for GitHub cron.
 
 Prerequisite:
 
 - GitHub CLI installed and authenticated (`gh auth status`)
-- This PC awake at 20:17
+- This Windows user logged on (lock screen is OK; full shutdown is not)
 - Repository secrets up to date (see below)
 
-Register:
+Register primary + evening catch-ups. Prefer an ASCII working directory
+(Chinese paths break Task Scheduler encoding). This repo is linked at
+`C:\danxi-daily`:
 
 ```powershell
-scripts/register_daily_task.ps1 -TaskName DanXiDailyDispatch -Time 20:17 -DispatchGitHub
+scripts/register_daily_task.ps1 -TaskName DanXiDailyDispatch -Time 20:17 -CatchUpTimes 21:30,22:45 -DispatchGitHub -ProjectRoot C:\danxi-daily
 ```
 
-Manual fire (after secrets are confirmed):
+The task uses `-StartWhenAvailable` and `-OnlyIfMissed`. If the PC was
+asleep at 20:17, Windows should run it when it next wakes the same day.
+
+Manual fire:
 
 ```powershell
 scripts/dispatch_daily.ps1
+scripts/dispatch_daily.ps1 -OnlyIfMissed
 ```
 
 Logs: `outputs/cron.log`.
+
+**Limit:** if this PC is powered off or the user is logged out all evening,
+Clock A cannot fire until the next login. Add Clock B.
+
+## Clock B (required if the PC may be off): cron-job.org
+
+Cloud HTTPS cron. Independent of this PC and of GitHub's scheduler.
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens.
+   Repo `danxi-daily-skill` only, permission **Actions: Read and write**.
+2. https://cron-job.org → create two jobs, timezone **UTC**:
+
+| When (UTC) | Meaning |
+|---|---|
+| `17 12 * * *` | 20:17 CST primary |
+| `30 13 * * *` | 21:30 CST catch-up |
+
+3. Each job:
+
+```
+POST https://api.github.com/repos/0patsick0/danxi-daily-skill/actions/workflows/daily-post.yml/dispatches
+Accept: application/vnd.github+json
+Authorization: Bearer <the fine-grained token>
+X-GitHub-Api-Version: 2022-11-28
+Content-Type: application/json
+
+{"ref": "main"}
+```
+
+Store the token in cron-job.org, never in this repo. A 204 response means
+GitHub accepted the dispatch.
 
 ## Backup clock: cron-job.org / EasyCron / a VPS
 
