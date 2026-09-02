@@ -120,19 +120,9 @@ macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-save-credentials
 
 ## Scheduling
 
-GitHub's native `schedule:` trigger is not a reliable clock for this repo
-(hours late, or silently skipped). Keep GitHub Actions as the **runner**,
-and use an **external clock** to `workflow_dispatch` it.
-
-Recommended on Windows (user logged on at 20:17; lock screen is OK):
-
-```powershell
-scripts/register_daily_task.ps1 -TaskName DanXiDailyDispatch -Time 20:17 -CatchUpTimes 21:30,22:45 -DispatchGitHub
-```
-
-If this PC may be powered off in the evening, also add the cron-job.org
-clock in [docs/scheduling.md](docs/scheduling.md). One clock is not enough
-to promise "never miss".
+GitHub's native `schedule:` trigger is not a reliable clock. Keep GitHub
+Actions as the **runner**. The production clock is **cloud-side** (Grok
+automation at 20:17 / 21:30 Asia/Shanghai), not this PC.
 
 Manual dispatch:
 
@@ -140,8 +130,8 @@ Manual dispatch:
 scripts/dispatch_daily.ps1
 ```
 
-See [docs/scheduling.md](docs/scheduling.md) for cron-job.org backup, local
-generate-only tasks, and why changing the GitHub cron minute does not help.
+See [docs/scheduling.md](docs/scheduling.md). Do not use Windows Task
+Scheduler as the daily clock.
 
 ## GitHub Actions (external dispatch + catch-up)
 
