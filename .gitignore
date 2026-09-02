@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+.wrangler/
 outputs/*.json
 outputs/*.md
 outputs/history/
