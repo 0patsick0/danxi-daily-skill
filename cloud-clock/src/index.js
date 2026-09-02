@@ -29,7 +29,12 @@ export default {
   async scheduled(_event, env, _ctx) {
     await dispatch(env);
   },
-  async fetch(_request, env) {
+  async fetch(request, env) {
+    const auth = request.headers.get("Authorization") || "";
+    const expected = env.CLOCK_KEY || env.GITHUB_DISPATCH_TOKEN;
+    if (!expected || auth !== `Bearer ${expected}`) {
+      return new Response("forbidden\n", { status: 403 });
+    }
     try {
       await dispatch(env);
       return new Response("dispatched\n", { status: 200 });

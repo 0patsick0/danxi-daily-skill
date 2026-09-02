@@ -1,6 +1,7 @@
 name = "danxi-daily-clock"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
+account_id = "d48c366aa5fb668f1d55734f08ad26ba"
 workers_dev = true
 
 # Cloudflare cron is UTC. 20:17 CST = 12:17 UTC, 21:30 CST = 13:30 UTC.

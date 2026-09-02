@@ -8,12 +8,14 @@ Cron (UTC):
 - `17 12 * * *` = 20:17 CST
 - `30 13 * * *` = 21:30 CST
 
-## Deploy
+Deployed as `danxi-daily-clock` on account `msa689704@gmail.com`.
 
-1. Fine-grained GitHub PAT, this repo only, **Actions: Read and write**.
-2. `npx wrangler login`
-3. `npx wrangler secret put GITHUB_DISPATCH_TOKEN` (paste the PAT)
-4. `npx wrangler deploy`
+- URL: https://danxi-daily-clock.msa689704.workers.dev (HTTP is auth-gated; cron does not use HTTP)
+- Secret: `GITHUB_DISPATCH_TOKEN`
+- Next fires: 20:17 and 21:30 Asia/Shanghai
 
-Manual poke: `npx wrangler dev` then GET the worker URL, or
-`npx wrangler deployments list`.
+To redeploy after code changes:
+
+```
+npx wrangler deploy
+```
