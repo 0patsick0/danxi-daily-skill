@@ -84,7 +84,11 @@ def post_markdown(
             body, final_url = webvpn_client._open(req, timeout=timeout)
 
             if _session_expired(body, final_url):
-                webvpn_client._authenticated = False
+                reset_session = getattr(webvpn_client, "reset_session", None)
+                if callable(reset_session):
+                    reset_session()
+                else:
+                    webvpn_client._authenticated = False
                 webvpn_client._ensure_authenticated()
                 body, final_url = webvpn_client._open(req, timeout=timeout)
                 if _session_expired(body, final_url):

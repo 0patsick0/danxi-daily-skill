@@ -200,6 +200,15 @@ class WebVPNClient:
         )
         self._authenticated = False
 
+    def reset_session(self) -> None:
+        """Drop cookies and auth state before a forced re-login."""
+        self._authenticated = False
+        self._cookie_jar = CookieJar()
+        self._opener = urllib.request.build_opener(
+            _PreserveMethodRedirectHandler(),
+            urllib.request.HTTPCookieProcessor(self._cookie_jar),
+        )
+
     def _attempt_open_with_retries(
         self,
         opener: Any,
@@ -413,17 +422,7 @@ class WebVPNClient:
         self._open(target_url)
         self._authenticated = True
 
-    def _ensure_authenticated(self) -> None:
-        if self._authenticated:
-            return
-
-        # Prefer CAS flow because many campus accounts are not valid local WebVPN accounts.
-        try:
-            self._ensure_authenticated_via_cas()
-            return
-        except WebVPNAuthError:
-            pass
-
+    def _ensure_authenticated_via_local(self) -> None:
         try:
             self._open(WEBVPN_LOGIN_URL)
             payload = urllib.parse.urlencode(
@@ -471,6 +470,20 @@ class WebVPNClient:
             raise WebVPNAuthError(f"webvpn post-login redirect failed: {exc}") from exc
 
         self._authenticated = True
+
+    def _ensure_authenticated(self) -> None:
+        if self._authenticated:
+            return
+
+        # Fudan UIS accounts authenticate through CAS. The WebVPN "local"
+        # login is a different account database; falling back to it after a
+        # CAS failure burns UIS/WebVPN password attempts and can lock the
+        # campus account. Keep local login opt-in only.
+        auth_mode = (os.getenv("DANXI_WEBVPN_AUTH") or "cas").strip().lower()
+        if auth_mode == "local":
+            self._ensure_authenticated_via_local()
+            return
+        self._ensure_authenticated_via_cas()
 
     def _parse_auth_error_message(self, exc: urllib.error.HTTPError) -> str:
         try:

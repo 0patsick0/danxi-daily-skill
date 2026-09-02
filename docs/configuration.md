@@ -37,6 +37,17 @@ Configuration priority is:
   - Optional daily post window in local time, format HH:MM.
   - Example: 08:00 (posting will only happen at/after this time).
 
+- DANXI_POST_ONCE_PER_DAY
+  - true | false
+  - Default: false
+  - When true, post at most once per local calendar day (safe for overlapping CI triggers).
+
+- DANXI_WEBVPN_AUTH
+  - cas | local
+  - Default: cas
+  - Fudan UIS accounts must use cas. Local WebVPN login is a different
+    account database and can lock the campus password if used as a fallback.
+
 - DANXI_ARCHIVE_OUTPUTS
   - true | false
   - Default: true

@@ -2,12 +2,18 @@ name: DanXi Daily Auto Post
 
 permissions:
   contents: write
+  issues: write
 
 on:
+  # GitHub's native schedule is best-effort and has been hours late or
+  # silently skipped for this repo. Keep a small catch-up window as a
+  # backup; the primary trigger is workflow_dispatch from an external
+  # cron (Windows Task Scheduler / cron-job.org). Do not keep tweaking
+  # the cron minute — delay here is platform-side, not a config bug.
   schedule:
-    # 20:17 China Standard Time (UTC+8) = 12:17 UTC
-    # Off peak hours to reduce GitHub Actions queue delay
-    - cron: "17 12 * * *"
+    - cron: "17 12 * * *"  # 20:17 CST target
+    - cron: "47 13 * * *"  # 21:47 CST catch-up
+    - cron: "17 15 * * *"  # 23:17 CST last-chance
   workflow_dispatch:
     inputs:
       dry_run:
@@ -65,6 +71,7 @@ jobs:
             --base-urls "https://forum.fduhole.com/api"
             --webvpn-mode force
             --webvpn-no-prompt
+            --post-once-per-day
             --verbose
           )
 
@@ -83,16 +90,49 @@ jobs:
       - name: Persist dedupe state
         if: success()
         run: |
-          # last_post.sha256 is committed to the repo so duplicate-post
-          # detection survives across CI runs (each run gets a fresh checkout).
-          if [ -n "$(git status --porcelain outputs/last_post.sha256 2>/dev/null)" ]; then
+          # last_post.sha256 and last_post_slot.txt are committed so
+          # duplicate-post / once-per-day detection survives across CI runs.
+          changed=0
+          for path in outputs/last_post.sha256 outputs/last_post_slot.txt; do
+            if [ -n "$(git status --porcelain "$path" 2>/dev/null)" ]; then
+              git add "$path"
+              changed=1
+            fi
+          done
+          if [ "$changed" -eq 1 ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add outputs/last_post.sha256
             git commit -m "chore: update post dedupe state [skip ci]"
             git push
           else
             echo "No dedupe state change to persist."
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          day="$(TZ=Asia/Shanghai date +%F)"
+          title="DanXi daily auto-post failed on ${day}"
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="$(cat <<EOF
+          GitHub Actions run failed: ${url}
+
+          Typical causes:
+          1. GitHub native \`schedule:\` skipped or ran late (use external dispatch).
+          2. \`DANXI_API_TOKEN\` expired and WebVPN re-login failed.
+          3. \`DANXI_WEBVPN_USERNAME\` / \`DANXI_WEBVPN_PASSWORD\` secrets are stale.
+
+          Do **not** keep re-running until WebVPN credentials are confirmed —
+          a wrong password can lock the campus account.
+          EOF
+          )"
+          existing="$(gh issue list --state open --search "in:title ${title}" --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
           fi
 
       - name: Upload generated report artifacts

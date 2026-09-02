@@ -57,3 +57,41 @@ Cause:
 
 Fix:
 - Increase --hours and/or remove --division-id filter.
+
+## 7) GitHub Actions "didn't trigger" / daily post missing
+
+This is usually two separate problems. Check the Actions tab for the
+calendar day in UTC+8 before changing cron minutes.
+
+### A) No run at all around 20:17 CST
+
+Cause:
+- GitHub native `schedule:` is best-effort. This repo has seen 9+ hour
+  delays and complete skips. Editing the cron minute does not fix it.
+
+Fix:
+- Use `scripts/dispatch_daily.ps1` / Windows Task Scheduler
+  (`-DispatchGitHub`) or cron-job.org to POST `workflow_dispatch`.
+- See docs/scheduling.md.
+
+### B) A run exists but failed
+
+2026-09-01 example: `workflow_dispatch` at 00:47 CST failed with:
+
+- forum API `{"exp":"token expired"}`
+- then WebVPN re-login: `INVALID_ACCOUNT [local]:用户名或密码错误；还剩4次机会`
+
+Cause:
+- `DANXI_API_TOKEN` secret is stale.
+- CAS login failed and the old code fell back to WebVPN *local* login,
+  which is a different account database and burns password attempts.
+
+Fix:
+1. Stop retrying. A wrong password can lock the campus UIS account.
+2. Update `DANXI_WEBVPN_USERNAME` / `DANXI_WEBVPN_PASSWORD` repo secrets
+   to the current UIS credentials.
+3. Optionally refresh `DANXI_API_TOKEN`.
+4. Run once with `dry_run=true`, then a real dispatch.
+
+CAS is now the only default WebVPN auth path. Local login is opt-in via
+`DANXI_WEBVPN_AUTH=local`.

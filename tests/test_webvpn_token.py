@@ -198,6 +198,55 @@ class WebvpnTokenTests(unittest.TestCase):
 
         self.assertIn("webvpn request failed", str(ctx.exception))
 
+    def test_cas_failure_does_not_fall_back_to_local_login(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        local_calls = {"count": 0}
+
+        def fail_cas() -> None:
+            raise WebVPNAuthError("cas rejected")
+
+        def mark_local() -> None:
+            local_calls["count"] += 1
+
+        client._ensure_authenticated_via_cas = fail_cas  # type: ignore[method-assign]
+        client._ensure_authenticated_via_local = mark_local  # type: ignore[method-assign]
+
+        with self.assertRaises(WebVPNAuthError) as ctx:
+            client._ensure_authenticated()
+
+        self.assertIn("cas rejected", str(ctx.exception))
+        self.assertEqual(local_calls["count"], 0)
+
+    def test_local_auth_mode_uses_local_login(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        local_calls = {"count": 0}
+
+        def mark_local() -> None:
+            local_calls["count"] += 1
+            client._authenticated = True
+
+        def fail_cas() -> None:
+            raise AssertionError("CAS should not run in local auth mode")
+
+        client._ensure_authenticated_via_cas = fail_cas  # type: ignore[method-assign]
+        client._ensure_authenticated_via_local = mark_local  # type: ignore[method-assign]
+
+        with patch.dict("os.environ", {"DANXI_WEBVPN_AUTH": "local"}, clear=False):
+            client._ensure_authenticated()
+
+        self.assertEqual(local_calls["count"], 1)
+        self.assertTrue(client._authenticated)
+
+    def test_reset_session_clears_auth_flag(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        client._authenticated = True
+        old_jar = client._cookie_jar
+
+        client.reset_session()
+
+        self.assertFalse(client._authenticated)
+        self.assertIsNot(client._cookie_jar, old_jar)
+
 
 if __name__ == "__main__":
     unittest.main()

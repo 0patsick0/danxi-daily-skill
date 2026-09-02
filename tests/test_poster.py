@@ -46,7 +46,7 @@ class PosterWebvpnSessionExpiryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, '{"ok": true}')
         self.assertEqual(client._open.call_count, 2)
-        self.assertFalse(client._authenticated)
+        self.assertEqual(client.reset_session.call_count, 1)
         self.assertEqual(client._ensure_authenticated.call_count, 2)
 
     def test_expired_session_still_expired_after_reauth_returns_401(self) -> None:

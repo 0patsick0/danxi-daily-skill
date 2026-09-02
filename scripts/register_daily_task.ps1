@@ -2,6 +2,8 @@ param(
     [string]$TaskName = "DanXiDailyReport",
     [string]$Time = "08:00",
     [switch]$EnablePost,
+    [switch]$DispatchGitHub,
+    [string]$Repo = "0patsick0/danxi-daily-skill",
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 )
 
@@ -44,8 +46,35 @@ if ($Time -notmatch '^(?:[01]\d|2[0-3]):[0-5]\d$') {
 }
 
 $runScript = Join-Path $ProjectRoot "scripts\run_daily.ps1"
+$dispatchScript = Join-Path $ProjectRoot "scripts\dispatch_daily.ps1"
 $logFile = Join-Path $ProjectRoot "outputs\cron.log"
 $envFile = Join-Path $ProjectRoot ".env"
+
+if ($DispatchGitHub) {
+    if (-not (Test-Path $dispatchScript)) {
+        throw "dispatch_daily.ps1 not found at $dispatchScript"
+    }
+    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $gh) {
+        throw "GitHub CLI (gh) is not on PATH. Install it from https://cli.github.com/ and run 'gh auth login'."
+    }
+
+    $escapedDispatch = Quote-PowerShellLiteral $dispatchScript
+    $escapedRepo = Quote-PowerShellLiteral $Repo
+    $escapedLogFile = Quote-PowerShellLiteral $logFile
+    $command = "& $escapedDispatch -Repo $escapedRepo *>> $escapedLogFile"
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -Command $command" -WorkingDirectory $ProjectRoot
+    $trigger = New-ScheduledTaskTrigger -Daily -At $Time
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Description "Dispatch DanXi daily GitHub Actions workflow" -Force | Out-Null
+
+    Write-Output "Scheduled task '$TaskName' registered at $Time."
+    Write-Output "Mode: GitHub Actions workflow_dispatch (does not depend on GitHub native cron)."
+    Write-Output "Repo: $Repo"
+    Write-Output "Logs: $logFile"
+    Write-Output "This PC must be awake at $Time, and 'gh auth status' must succeed for the same Windows user."
+    return
+}
 
 if (-not (Test-Path $runScript)) {
     throw "run_daily.ps1 not found at $runScript"

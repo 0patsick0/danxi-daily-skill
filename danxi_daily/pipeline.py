@@ -47,6 +47,7 @@ class PipelineConfig:
     unsafe_allow_any_host: bool = False
     post_dedupe_file: Path = Path("outputs/last_post.sha256")
     post_schedule_hhmm: str | None = None
+    post_once_per_day: bool = False
     post_schedule_state_file: Path = Path("outputs/last_post_slot.txt")
     verbose: bool = False
     webvpn_client: WebVPNClient | None = None
@@ -150,19 +151,30 @@ def _current_post_slot(hhmm: str, now_local: datetime) -> str:
     return f"{now_local.strftime('%Y%m%d')}-{hhmm}"
 
 
+def _read_last_post_slot(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
 def _should_skip_post_for_schedule(config: PipelineConfig, now_local: datetime) -> tuple[bool, str | None, str | None]:
+    if config.post_once_per_day:
+        slot = now_local.strftime("%Y%m%d")
+        last_slot = _read_last_post_slot(config.post_schedule_state_file)
+        if last_slot == slot or last_slot.startswith(f"{slot}-"):
+            return True, "same_slot_already_posted", slot
+        return False, None, slot
+
     if not config.post_schedule_hhmm:
         return False, None, None
     if not _is_post_due_today(config.post_schedule_hhmm, now_local):
         return True, "schedule_not_due", None
 
     slot = _current_post_slot(config.post_schedule_hhmm, now_local)
-    last_slot = ""
-    if config.post_schedule_state_file.exists():
-        try:
-            last_slot = config.post_schedule_state_file.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            last_slot = ""
+    last_slot = _read_last_post_slot(config.post_schedule_state_file)
     if last_slot == slot:
         return True, "same_slot_already_posted", slot
     return False, None, slot

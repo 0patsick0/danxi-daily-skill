@@ -120,40 +120,42 @@ macOS/Linux: python3 scripts/generate_daily.py --webvpn-no-save-credentials
 
 ## Scheduling
 
-See docs/scheduling.md for:
-- Linux/macOS cron at 08:00
-- Windows Task Scheduler at 08:00
-- GitHub Actions daily auto-post at 22:12 (UTC+8)
-- CronCreate prompt examples for agent-based setup
+GitHub's native `schedule:` trigger is not a reliable clock for this repo
+(hours late, or silently skipped). Keep GitHub Actions as the **runner**,
+and use an **external clock** to `workflow_dispatch` it.
 
-Quick Windows setup (recommended):
+Recommended on Windows (PC must be awake at 20:17):
 
-PowerShell (generate only):
+```powershell
+scripts/register_daily_task.ps1 -TaskName DanXiDailyDispatch -Time 20:17 -DispatchGitHub
+```
 
-scripts/register_daily_task.ps1 -TaskName DanXiDailyReport -Time 08:00
+Manual dispatch:
 
-PowerShell (generate + publish after 08:00):
+```powershell
+scripts/dispatch_daily.ps1
+```
 
-scripts/register_daily_task.ps1 -TaskName DanXiDailyPublish -Time 08:00 -EnablePost
+See [docs/scheduling.md](docs/scheduling.md) for cron-job.org backup, local
+generate-only tasks, and why changing the GitHub cron minute does not help.
 
-Note: `-EnablePost` requires `DANXI_POST_ENDPOINT` and `DANXI_POST_TOKEN` in environment variables or `.env`.
+## GitHub Actions (external dispatch + catch-up)
 
-## GitHub Actions (20:17 Auto Post)
+[.github/workflows/daily-post.yml](.github/workflows/daily-post.yml) is started
+by `workflow_dispatch`. Native `schedule:` times are a last-resort catch-up
+window only.
 
-This repository includes [.github/workflows/daily-post.yml](.github/workflows/daily-post.yml), which runs every day at 20:17 China time.
-
-Before enabling it, set repository secrets:
+Required repository secrets:
 - DANXI_POST_ENDPOINT
 - DANXI_POST_TOKEN
-- DANXI_API_TOKEN (optional, if your read endpoint requires token)
-- DANXI_WEBVPN_USERNAME (optional, for auto token refresh)
-- DANXI_WEBVPN_PASSWORD (optional, for auto token refresh)
+- DANXI_API_TOKEN (optional; refreshed via WebVPN when expired)
+- DANXI_WEBVPN_USERNAME (required for CI)
+- DANXI_WEBVPN_PASSWORD (required for CI; must match the current UIS password)
 
 Safety behavior:
 - Workflow only runs on the repository default branch.
-- Manual trigger on non-default branches will be skipped.
-
-Then enable Actions in your repository settings. You can also run it manually from the Actions tab via workflow_dispatch.
+- `--post-once-per-day` so overlapping triggers do not double-post.
+- Failed runs open a GitHub issue. Do not keep retrying after a password error.
 
 ## Tests
 

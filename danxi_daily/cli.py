@@ -291,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=(os.getenv("DANXI_POST_AT") or "").strip() or None,
         help="Only post at/after local HH:MM each day. Example: 08:00",
     )
+    parser.add_argument(
+        "--post-once-per-day",
+        action="store_true",
+        default=_bool_from_env("DANXI_POST_ONCE_PER_DAY", False),
+        help="Post at most once per local calendar day. Safe for overlapping CI triggers.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print extra details such as post response snippets.")
     return parser
 
@@ -371,6 +377,7 @@ def main() -> int:
         post_endpoint=args.post_endpoint,
         post_token=os.getenv("DANXI_POST_TOKEN"),
         post_schedule_hhmm=args.post_at,
+        post_once_per_day=bool(args.post_once_per_day),
         allowed_read_hosts=read_allowlist,
         allowed_post_hosts=post_allowlist,
         unsafe_allow_any_host=args.unsafe_allow_any_host,

@@ -1,75 +1,118 @@
 # Scheduling
 
-## Option A: Linux/macOS cron
+GitHub's native `schedule:` trigger is **not a reliable clock**. For this
+repository it has:
 
-Run at 08:00 every day:
+- fired ~9.5 hours late (2026-08-27 / 2026-08-28), independent of cron minute
+- gone silent after the workflow was edited back and forth
+- been confused with "didn't run" when a manual/external `workflow_dispatch`
+  later failed for a different reason (expired token / WebVPN login)
 
-0 8 * * * cd /path/to/danxi-daily && /usr/bin/python3 scripts/generate_daily.py --hours 24 --top 12 >> outputs/cron.log 2>&1
+Do **not** keep changing the cron minute. That does not fix platform delay,
+and it resets GitHub's scheduler state.
 
-## Option B: Windows Task Scheduler
+The runner stays GitHub Actions. The **clock** must be external.
 
-Create a daily task at 08:00:
+## Recommended: Windows Task Scheduler dispatches GitHub Actions
 
-Program/script:
-python
+This is the reliable path on the development PC. At 20:17 local time it
+calls `gh workflow run`, which starts immediately (unlike `schedule:`).
 
-Arguments:
-scripts/generate_daily.py --hours 24 --top 12
+Prerequisite:
 
-Start in:
-C:\path\to\danxi-daily
+- GitHub CLI installed and authenticated (`gh auth status`)
+- This PC awake at 20:17
+- Repository secrets up to date (see below)
 
-Or use the built-in helper script:
+Register:
 
-Generate only:
+```powershell
+scripts/register_daily_task.ps1 -TaskName DanXiDailyDispatch -Time 20:17 -DispatchGitHub
+```
 
+Manual fire (after secrets are confirmed):
+
+```powershell
+scripts/dispatch_daily.ps1
+```
+
+Logs: `outputs/cron.log`.
+
+## Backup clock: cron-job.org / EasyCron / a VPS
+
+Any HTTPS cron that can POST with an Authorization header works.
+
+1. Create a fine-grained PAT scoped to this repo, permission **Actions: Read and write**.
+2. Fire daily at **12:17 UTC** (= 20:17 CST):
+
+```
+POST https://api.github.com/repos/0patsick0/danxi-daily-skill/actions/workflows/daily-post.yml/dispatches
+Accept: application/vnd.github+json
+Authorization: Bearer <token>
+X-GitHub-Api-Version: 2022-11-28
+
+{"ref": "main"}
+```
+
+Store the token in the cron service, never in the repo.
+
+## Last-resort: GitHub native schedule
+
+`.github/workflows/daily-post.yml` still has a catch-up window:
+
+- 20:17 CST target
+- 21:47 CST catch-up
+- 23:17 CST last-chance
+
+Treat these as backups only. `--post-once-per-day` makes overlapping
+triggers safe.
+
+## Required repository secrets
+
+Used by the workflow itself (unrelated to the dispatch token above):
+
+- `DANXI_POST_ENDPOINT`
+- `DANXI_POST_TOKEN`
+- `DANXI_API_TOKEN` (optional; CI refreshes it via WebVPN when expired)
+- `DANXI_WEBVPN_USERNAME` (required for CI)
+- `DANXI_WEBVPN_PASSWORD` (required for CI; must be the current UIS password)
+
+If WebVPN login fails, **stop retrying**. A wrong password can lock the
+campus account. Update the secrets first, then dispatch once.
+
+## Workflow behavior
+
+- Runs `scripts/generate_daily.py` with `--post`, WebVPN force mode, `--post-once-per-day`
+- No `--post-at` gate — the external clock controls timing
+- Uploads `outputs/daily.md`, `outputs/ranked.json`, `outputs/holes.raw.json`
+- Default branch only
+- After a successful post, commits `outputs/last_post.sha256` and
+  `outputs/last_post_slot.txt` (`[skip ci]`)
+- On failure, opens or comments on a GitHub issue so a silent skip is visible
+
+## Local generate (no GitHub)
+
+Windows generate only:
+
+```powershell
 scripts/register_daily_task.ps1 -TaskName DanXiDailyReport -Time 08:00
+```
 
-Generate + publish after 08:00:
+Windows generate + local publish after 08:00:
 
+```powershell
 scripts/register_daily_task.ps1 -TaskName DanXiDailyPublish -Time 08:00 -EnablePost
+```
 
-Prerequisite for `-EnablePost`:
-- `DANXI_POST_ENDPOINT` and `DANXI_POST_TOKEN` must exist in environment variables or `.env`.
+Linux/macOS cron:
 
-The helper writes logs to outputs/cron.log.
-
-## Option C: Agent-based CronCreate prompt
-
-Use this prompt inside your coding agent:
-
-Create a daily scheduled task at 08:00 local time to run:
-python scripts/generate_daily.py --hours 24 --top 12
-in the danxi-daily project root, and write logs to outputs/cron.log.
-
-## Option D: GitHub Actions (20:17 daily auto post)
-
-Workflow file:
-
-.github/workflows/daily-post.yml
-
-Schedule:
-- 20:17 China Standard Time (UTC+8)
-- Cron in GitHub Actions is UTC, so it uses: `17 12 * * *`
-
-Required repository secrets:
-- DANXI_POST_ENDPOINT
-- DANXI_POST_TOKEN
-- DANXI_API_TOKEN (optional)
-- DANXI_WEBVPN_USERNAME (required for CI; runners cannot reach campus endpoints directly)
-- DANXI_WEBVPN_PASSWORD (required for CI, same reason)
-
-Behavior:
-- Runs `scripts/generate_daily.py` with `--post`, WebVPN force mode
-- No `--post-at` gate — the GitHub Actions `schedule` controls timing
-- Uploads `outputs/daily.md`, `outputs/ranked.json`, `outputs/holes.raw.json` as artifacts
-- Only runs on the repository default branch (manual runs on other branches are skipped)
-- After a successful post, commits `outputs/last_post.sha256` back to the
-  repo (`[skip ci]`) so duplicate-post detection survives across runs
-- Manual runs: Actions tab → DanXi Daily Auto Post → Run workflow
+```
+0 8 * * * cd /path/to/danxi-daily && /usr/bin/python3 scripts/generate_daily.py --hours 24 --top 12 >> outputs/cron.log 2>&1
+```
 
 ## Recommended Safety
 
-- Keep posting disabled in scheduled runs unless fully verified.
-- Monitor outputs/cron.log and outputs/daily.md each morning.
-- If posting is enabled, set --post-at HH:MM to avoid early execution before your desired window.
+- Confirm WebVPN secrets with one dry-run before enabling posting:
+  Actions tab → DanXi Daily Auto Post → Run workflow → `dry_run=true`
+- Do not keep re-dispatching after `INVALID_ACCOUNT` / `还剩N次机会`
+- Monitor the Actions tab and any auto-opened failure issues
