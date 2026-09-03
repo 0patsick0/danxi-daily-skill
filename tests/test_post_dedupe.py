@@ -162,6 +162,31 @@ class PostDedupeTests(unittest.TestCase):
             self.assertEqual(second["post_result"]["reason"], "same_slot_already_posted")
             self.assertEqual(mock_post.call_count, 1)
 
+    def test_once_per_day_uses_post_at_as_day_boundary_not_midnight(self) -> None:
+        from datetime import datetime
+        from danxi_daily.pipeline import PipelineConfig, _should_skip_post_for_schedule
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            slot_file = root / "last_slot.txt"
+            slot_file.write_text("20260902", encoding="utf-8")
+            config = PipelineConfig(
+                base_urls=["https://forum.fduhole.com/api"],
+                post_schedule_state_file=slot_file,
+                post_once_per_day=True,
+                post_schedule_hhmm="22:00",
+            )
+            after_midnight = datetime(2026, 9, 3, 1, 48, 0).astimezone()
+            skip, reason, slot = _should_skip_post_for_schedule(config, after_midnight)
+            self.assertTrue(skip)
+            self.assertEqual(reason, "same_slot_already_posted")
+            self.assertEqual(slot, "20260902")
+
+            next_evening = datetime(2026, 9, 3, 22, 0, 0).astimezone()
+            skip, reason, slot = _should_skip_post_for_schedule(config, next_evening)
+            self.assertFalse(skip)
+            self.assertEqual(slot, "20260903")
+
 
 if __name__ == "__main__":
     unittest.main()

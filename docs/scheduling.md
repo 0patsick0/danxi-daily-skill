@@ -10,13 +10,14 @@ PC.
 ```
 22:00 CST  Cloudflare Worker cron (primary)
 22:20 CST  Cloudflare Worker catch-up
-22:00 CST  Grok automation (backup)
-22:30 CST  Grok automation catch-up
-22:00/22:20/23:00 CST  GitHub schedule (last resort)
          |
          v
-GitHub Actions  --post --post-once-per-day
+GitHub Actions  --post --post-once-per-day --post-at 22:00
 on failure: open a GitHub issue
+
+GitHub native `schedule:` is disabled. It ran ~4 hours late on
+2026-09-03 01:48 CST and posted again because calendar-day dedupe
+treated 01:48 as a new day. Day boundary is now 22:00, not midnight.
 ```
 
 Overlapping fires are safe. The workflow posts at most once per

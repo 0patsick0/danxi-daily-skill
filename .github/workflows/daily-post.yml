@@ -5,15 +5,9 @@ permissions:
   issues: write
 
 on:
-  # GitHub's native schedule is best-effort and has been hours late or
-  # silently skipped for this repo. Keep a small catch-up window as a
-  # backup; the primary trigger is workflow_dispatch from an external
-  # cron (Windows Task Scheduler / cron-job.org). Do not keep tweaking
-  # the cron minute — delay here is platform-side, not a config bug.
-  schedule:
-    - cron: "0 14 * * *"   # 22:00 CST target
-    - cron: "20 14 * * *"  # 22:20 CST catch-up
-    - cron: "0 15 * * *"   # 23:00 CST last-chance
+  # Do NOT use GitHub native schedule:. It has fired hours late for this
+  # repo and, after midnight, bypassed the calendar-day post guard.
+  # Clock is Cloudflare Worker cron -> workflow_dispatch only.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -64,7 +58,7 @@ jobs:
 
           # GitHub Actions runners cannot reach campus endpoints directly.
           # Use WebVPN force mode; API token auto-refreshes via WebVPN on expiry.
-          # NOTE: No --post-at gate here; the cron schedule itself controls timing.
+          # Day boundary is 22:00 Asia/Shanghai, not calendar midnight.
           args=(
             --hours 24
             --top 12
@@ -72,6 +66,7 @@ jobs:
             --webvpn-mode force
             --webvpn-no-prompt
             --post-once-per-day
+            --post-at 22:00
             --verbose
           )
 

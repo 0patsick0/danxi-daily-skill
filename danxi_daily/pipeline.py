@@ -7,7 +7,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -160,12 +160,24 @@ def _read_last_post_slot(path: Path) -> str:
         return ""
 
 
+def _once_per_day_slot(now_local: datetime, cutoff_hhmm: str | None) -> str:
+    # Calendar midnight is the wrong boundary for an evening digest.
+    # A delayed 22:00 job that lands at 01:00 next day must still count as
+    # yesterday's slot, otherwise GitHub's late schedule: events double-post.
+    if cutoff_hhmm and not _is_post_due_today(cutoff_hhmm, now_local):
+        return (now_local - timedelta(days=1)).strftime("%Y%m%d")
+    return now_local.strftime("%Y%m%d")
+
+
 def _should_skip_post_for_schedule(config: PipelineConfig, now_local: datetime) -> tuple[bool, str | None, str | None]:
     if config.post_once_per_day:
-        slot = now_local.strftime("%Y%m%d")
+        slot = _once_per_day_slot(now_local, config.post_schedule_hhmm)
         last_slot = _read_last_post_slot(config.post_schedule_state_file)
         if last_slot == slot or last_slot.startswith(f"{slot}-"):
             return True, "same_slot_already_posted", slot
+        if cutoff := config.post_schedule_hhmm:
+            if not _is_post_due_today(cutoff, now_local):
+                return True, "schedule_not_due", slot
         return False, None, slot
 
     if not config.post_schedule_hhmm:
