@@ -11,7 +11,7 @@ def build_daily_markdown(
     posts: list[RankedPost],
     title_prefix: str = "旦夕热榜日报",
     github_repo: str = "https://github.com/0patsick0/danxi-daily-skill",
-    shop_url: str = "https://pay.ldxp.cn/shop/MYCGV9EW",
+    shop_url: str = "https://wzyp.cn/shop/BTNW",
     shop_ad_interval_days: int = 1,
 ) -> str:
     now = datetime.now(timezone.utc)

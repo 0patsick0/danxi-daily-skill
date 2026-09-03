@@ -33,8 +33,8 @@ class ReporterFormatTests(unittest.TestCase):
         self.assertNotIn("摘要", text)
         self.assertNotIn("话题解读", text)
         # No English headers
-        self.assertIn("ai小店:[https://pay.ldxp.cn/shop/MYCGV9EW]", text)
-        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/MYCGV9EW]")
+        self.assertIn("ai小店:[https://wzyp.cn/shop/BTNW]", text)
+        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://wzyp.cn/shop/BTNW]")
         self.assertNotIn("Generated at", text)
         self.assertNotIn("Hot Posts", text)
 
@@ -57,7 +57,7 @@ class ReporterFormatTests(unittest.TestCase):
         text = build_daily_markdown([])
 
         self.assertIn("暂未抓取到符合条件", text)
-        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://pay.ldxp.cn/shop/MYCGV9EW]")
+        self.assertEqual(text.rstrip().splitlines()[-1], "ai小店:[https://wzyp.cn/shop/BTNW]")
 
     def test_shop_ad_is_optional(self) -> None:
         posts = [
