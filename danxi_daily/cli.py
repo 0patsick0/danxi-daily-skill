@@ -49,6 +49,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be >= 0")
+    return parsed
+
+
 def _hhmm_or_none(value: str) -> str | None:
     text = value.strip()
     if not text:
@@ -289,13 +296,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--post-at",
         type=_hhmm_or_none,
         default=(os.getenv("DANXI_POST_AT") or "").strip() or None,
-        help="Only post at/after local HH:MM each day. Example: 08:00",
+        help="Only post at/after local HH:MM each day. Example: 22:00",
+    )
+    parser.add_argument(
+        "--post-window-minutes",
+        type=_non_negative_int,
+        default=None,
+        help="With --post-at, refuse posts this many minutes after the scheduled time. 0 = no upper bound.",
     )
     parser.add_argument(
         "--post-once-per-day",
         action="store_true",
         default=_bool_from_env("DANXI_POST_ONCE_PER_DAY", False),
-        help="Post at most once per local calendar day. Safe for overlapping CI triggers.",
+        help="Post at most once per post-day (boundary is --post-at, not midnight).",
     )
     parser.add_argument("--verbose", action="store_true", help="Print extra details such as post response snippets.")
     return parser
@@ -312,6 +325,14 @@ def main() -> int:
             args.post_at = _hhmm_or_none(str(args.post_at))
         except argparse.ArgumentTypeError as exc:
             parser.error(f"invalid DANXI_POST_AT/--post-at: {exc}")
+
+    if args.post_window_minutes is None:
+        env_window = (os.getenv("DANXI_POST_WINDOW_MINUTES") or "").strip()
+        if env_window:
+            try:
+                args.post_window_minutes = _non_negative_int(env_window)
+            except argparse.ArgumentTypeError as exc:
+                parser.error(f"invalid DANXI_POST_WINDOW_MINUTES/--post-window-minutes: {exc}")
 
     if args.webvpn_mode not in {"auto", "off", "force"}:
         parser.error("webvpn mode must be one of: auto, off, force")
@@ -378,6 +399,7 @@ def main() -> int:
         post_token=os.getenv("DANXI_POST_TOKEN"),
         post_schedule_hhmm=args.post_at,
         post_once_per_day=bool(args.post_once_per_day),
+        post_window_minutes=args.post_window_minutes,
         allowed_read_hosts=read_allowlist,
         allowed_post_hosts=post_allowlist,
         unsafe_allow_any_host=args.unsafe_allow_any_host,

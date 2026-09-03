@@ -87,6 +87,7 @@ class PostDedupeTests(unittest.TestCase):
             self.assertEqual(result["post_result"]["status"], "skipped")
             self.assertEqual(result["post_result"]["reason"], "schedule_not_due")
             self.assertEqual(mock_post.call_count, 0)
+            self.assertEqual(mock_fetch_holes.call_count, 0)
 
     @patch("danxi_daily.pipeline.fetch_hole_floors", return_value=[])
     @patch("danxi_daily.pipeline.fetch_holes_with_fallback")
@@ -185,6 +186,50 @@ class PostDedupeTests(unittest.TestCase):
             next_evening = datetime(2026, 9, 3, 22, 0, 0).astimezone()
             skip, reason, slot = _should_skip_post_for_schedule(config, next_evening)
             self.assertFalse(skip)
+            self.assertEqual(slot, "20260903")
+
+    def test_after_midnight_does_not_open_a_new_day_slot(self) -> None:
+        from datetime import datetime
+        from danxi_daily.pipeline import PipelineConfig, _should_skip_post_for_schedule
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = PipelineConfig(
+                base_urls=["https://forum.fduhole.com/api"],
+                post_schedule_state_file=root / "last_slot.txt",
+                post_once_per_day=True,
+                post_schedule_hhmm="22:00",
+                post_window_minutes=60,
+            )
+            after_midnight = datetime(2026, 9, 3, 1, 48, 0).astimezone()
+            skip, reason, slot = _should_skip_post_for_schedule(config, after_midnight)
+            self.assertTrue(skip)
+            self.assertEqual(reason, "schedule_not_due")
+            self.assertEqual(slot, "20260902")
+
+    def test_post_window_blocks_late_extras_but_allows_catchup(self) -> None:
+        from datetime import datetime
+        from danxi_daily.pipeline import PipelineConfig, _should_skip_post_for_schedule
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = PipelineConfig(
+                base_urls=["https://forum.fduhole.com/api"],
+                post_schedule_state_file=root / "last_slot.txt",
+                post_once_per_day=True,
+                post_schedule_hhmm="22:00",
+                post_window_minutes=60,
+            )
+            catchup = datetime(2026, 9, 3, 22, 20, 0).astimezone()
+            skip, reason, slot = _should_skip_post_for_schedule(config, catchup)
+            self.assertFalse(skip)
+            self.assertIsNone(reason)
+            self.assertEqual(slot, "20260903")
+
+            too_late = datetime(2026, 9, 3, 23, 5, 0).astimezone()
+            skip, reason, slot = _should_skip_post_for_schedule(config, too_late)
+            self.assertTrue(skip)
+            self.assertEqual(reason, "outside_post_window")
             self.assertEqual(slot, "20260903")
 
 

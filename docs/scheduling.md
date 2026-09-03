@@ -2,7 +2,7 @@
 
 GitHub's native `schedule:` trigger is **not a reliable clock**. This repo
 has seen 9+ hour delays and complete skips. Do not keep changing the cron
-minute.
+minute. Do **not** re-add `on.schedule` to the workflow.
 
 The runner stays GitHub Actions. The **clock must be cloud-side**, not this
 PC.
@@ -12,37 +12,39 @@ PC.
 22:20 CST  Cloudflare Worker catch-up
          |
          v
-GitHub Actions  --post --post-once-per-day --post-at 22:00
+GitHub Actions  workflow_dispatch only
+  --post --post-once-per-day --post-at 22:00 --post-window-minutes 60
 on failure: open a GitHub issue
-
-GitHub native `schedule:` is disabled. It ran ~4 hours late on
-2026-09-03 01:48 CST and posted again because calendar-day dedupe
-treated 01:48 as a new day. Day boundary is now 22:00, not midnight.
 ```
 
-Overlapping fires are safe. The workflow posts at most once per
-Asia/Shanghai calendar day.
+## Why the 01:48 extra post happened
 
-## Clock A (active): Grok cloud automation
+On 2026-09-03 the workflow still had GitHub `schedule:` crons
+(`22:00` / `22:20` / `23:00` CST) **without** `--post-at`. GitHub fired the
+22:00 cron ~4 hours late (01:48). `--post-once-per-day` used calendar
+midnight, so 01:48 counted as a new day and published. The 23:00 last-chance
+cron then fired at 02:30 and published again. That occupied slot `20260903`,
+so the real 22:00 digest was skipped.
 
-Runs on xAI, not on this PC.
+## Guards now in place
 
-- `danxi-daily-dispatch` at **22:00 Asia/Shanghai**
-- `danxi-daily-dispatch-catchup` at **22:30 Asia/Shanghai**
-- Dispatches `DanXi Daily Auto Post` on `0patsick0/danxi-daily-skill`
-- Skips if `outputs/last_post_slot.txt` is already today's date
-- Emails on failure
+1. Cloudflare Worker cron is the only clock (`0 14 * * *`, `20 14 * * *` UTC).
+2. GitHub workflow is `workflow_dispatch` only. `schedule` events are ignored
+   even if the trigger is re-added.
+3. `--post-at 22:00` is the day boundary, not calendar midnight.
+4. `--post-window-minutes 60` refuses anything after 23:00, including delayed
+   overnight runs.
+5. A due skip (already posted / too early / outside window) exits before
+   fetching, so a 22:20 catch-up does not burn WebVPN or fail on an expired
+   token after 22:00 already succeeded.
 
-## Clock B (optional extra): Cloudflare Worker
+Overlapping fires inside the window are safe: at most one post per 22:00
+post-day.
 
-See [cloud-clock/README.md](../cloud-clock/README.md). Independent of Grok
-and of this PC. Needs `wrangler login` plus a fine-grained GitHub PAT
-stored as `GITHUB_DISPATCH_TOKEN`.
+## Clock A (active): Cloudflare Worker
 
-## Clock C (last resort): GitHub native schedule
-
-`.github/workflows/daily-post.yml` still has a catch-up window. Treat as
-backup only.
+See [cloud-clock/README.md](../cloud-clock/README.md). Independent of this PC.
+Needs `wrangler login` plus a GitHub token stored as `GITHUB_DISPATCH_TOKEN`.
 
 ## Required repository secrets
 
@@ -59,9 +61,10 @@ campus account.
 
 ## Workflow behavior
 
-- Runs `scripts/generate_daily.py` with `--post`, WebVPN force mode, `--post-once-per-day`
+- Runs `scripts/generate_daily.py` with `--post`, WebVPN force mode,
+  `--post-once-per-day`, `--post-at 22:00`, `--post-window-minutes 60`
 - Uploads `outputs/daily.md`, `outputs/ranked.json`, `outputs/holes.raw.json`
-- Default branch only
+- Default branch only; never `schedule`
 - After a successful post, commits `outputs/last_post.sha256` and
   `outputs/last_post_slot.txt` (`[skip ci]`)
 - On failure, opens or comments on a GitHub issue
@@ -72,6 +75,8 @@ campus account.
 scripts/dispatch_daily.ps1
 scripts/dispatch_daily.ps1 -OnlyIfMissed
 ```
+
+Manual real posts outside 22:00-23:00 Asia/Shanghai are skipped.
 
 ## Local generate (optional, not the daily clock)
 

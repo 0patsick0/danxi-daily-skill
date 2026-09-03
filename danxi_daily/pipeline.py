@@ -48,6 +48,7 @@ class PipelineConfig:
     post_dedupe_file: Path = Path("outputs/last_post.sha256")
     post_schedule_hhmm: str | None = None
     post_once_per_day: bool = False
+    post_window_minutes: int | None = None
     post_schedule_state_file: Path = Path("outputs/last_post_slot.txt")
     verbose: bool = False
     webvpn_client: WebVPNClient | None = None
@@ -138,13 +139,30 @@ def _prune_floor_cache(cache: dict[str, dict[str, Any]], max_entries: int) -> di
     return dict(keep)
 
 
-def _is_post_due_today(hhmm: str, now_local: datetime) -> bool:
+def _parse_post_hhmm(hhmm: str) -> tuple[int, int]:
     match = _POST_SCHEDULE_RE.match(hhmm)
     if match is None:
         raise ValueError("post schedule must be HH:MM (24-hour)")
-    hour = int(match.group(1))
-    minute = int(match.group(2))
+    return int(match.group(1)), int(match.group(2))
+
+
+def _is_post_due_today(hhmm: str, now_local: datetime) -> bool:
+    hour, minute = _parse_post_hhmm(hhmm)
     return (now_local.hour, now_local.minute) >= (hour, minute)
+
+
+def _is_within_post_window(
+    hhmm: str,
+    now_local: datetime,
+    window_minutes: int | None,
+) -> bool:
+    hour, minute = _parse_post_hhmm(hhmm)
+    start = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now_local < start:
+        return False
+    if window_minutes is None or window_minutes <= 0:
+        return True
+    return now_local < start + timedelta(minutes=window_minutes)
 
 
 def _current_post_slot(hhmm: str, now_local: datetime) -> str:
@@ -178,12 +196,18 @@ def _should_skip_post_for_schedule(config: PipelineConfig, now_local: datetime) 
         if cutoff := config.post_schedule_hhmm:
             if not _is_post_due_today(cutoff, now_local):
                 return True, "schedule_not_due", slot
+            if not _is_within_post_window(cutoff, now_local, config.post_window_minutes):
+                return True, "outside_post_window", slot
         return False, None, slot
 
     if not config.post_schedule_hhmm:
         return False, None, None
     if not _is_post_due_today(config.post_schedule_hhmm, now_local):
         return True, "schedule_not_due", None
+    if not _is_within_post_window(
+        config.post_schedule_hhmm, now_local, config.post_window_minutes
+    ):
+        return True, "outside_post_window", None
 
     slot = _current_post_slot(config.post_schedule_hhmm, now_local)
     last_slot = _read_last_post_slot(config.post_schedule_state_file)
@@ -359,6 +383,29 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
             validate_allowed_host(config.post_endpoint, config.allowed_post_hosts)
 
     start_time = _effective_start_time(config.hours)
+    if config.post:
+        skip_early, early_reason, early_slot = _should_skip_post_for_schedule(
+            config, datetime.now().astimezone()
+        )
+        if skip_early:
+            early_post_result: dict[str, Any] = {
+                "status": "skipped",
+                "reason": early_reason,
+            }
+            if early_slot:
+                early_post_result["slot"] = early_slot
+            return {
+                "used_endpoint": "",
+                "start_time": start_time,
+                "fetched": 0,
+                "ranked": 0,
+                "top": 0,
+                "output_markdown": str(config.output_markdown),
+                "output_holes": str(config.output_holes),
+                "output_ranked": str(config.output_ranked),
+                "post_result": early_post_result,
+            }
+
     holes, used_endpoint = _fetch_hot_candidates(config)
     prefer_webvpn_for_floors = config.webvpn_client is not None and (
         config.force_webvpn or should_prefer_webvpn(used_endpoint)

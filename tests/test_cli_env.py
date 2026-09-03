@@ -311,6 +311,8 @@ class CliEnvTests(unittest.TestCase):
                         "https://forum.fduhole.com/api",
                         "--post-at",
                         "08:30",
+                        "--post-window-minutes",
+                        "60",
                         "--webvpn-no-prompt",
                     ]
                     with patch("sys.argv", argv):
@@ -321,6 +323,7 @@ class CliEnvTests(unittest.TestCase):
 
         called_config = mock_run_pipeline.call_args[0][0]
         self.assertEqual(called_config.post_schedule_hhmm, "08:30")
+        self.assertEqual(called_config.post_window_minutes, 60)
 
 
 if __name__ == "__main__":

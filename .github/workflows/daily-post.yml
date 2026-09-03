@@ -17,7 +17,9 @@ on:
 
 jobs:
   auto-post:
-    if: ${{ github.ref_name == github.event.repository.default_branch }}
+    # GitHub native schedule: has posted hours late after midnight.
+    # Even if someone re-adds it, those events must never publish.
+    if: ${{ github.ref_name == github.event.repository.default_branch && github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -59,6 +61,7 @@ jobs:
           # GitHub Actions runners cannot reach campus endpoints directly.
           # Use WebVPN force mode; API token auto-refreshes via WebVPN on expiry.
           # Day boundary is 22:00 Asia/Shanghai, not calendar midnight.
+          # Post window is 22:00-23:00 so a delayed trigger at 01:00 cannot publish.
           args=(
             --hours 24
             --top 12
@@ -67,6 +70,7 @@ jobs:
             --webvpn-no-prompt
             --post-once-per-day
             --post-at 22:00
+            --post-window-minutes 60
             --verbose
           )
 
