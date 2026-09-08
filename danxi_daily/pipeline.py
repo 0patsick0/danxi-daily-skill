@@ -180,7 +180,7 @@ def _read_last_post_slot(path: Path) -> str:
 
 def _once_per_day_slot(now_local: datetime, cutoff_hhmm: str | None) -> str:
     # Calendar midnight is the wrong boundary for an evening digest.
-    # A delayed 22:00 job that lands at 01:00 next day must still count as
+    # A delayed evening job that lands at 01:00 next day must still count as
     # yesterday's slot, otherwise GitHub's late schedule: events double-post.
     if cutoff_hhmm and not _is_post_due_today(cutoff_hhmm, now_local):
         return (now_local - timedelta(days=1)).strftime("%Y%m%d")

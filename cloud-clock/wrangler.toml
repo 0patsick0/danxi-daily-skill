@@ -4,7 +4,8 @@ compatibility_date = "2026-09-01"
 account_id = "d48c366aa5fb668f1d55734f08ad26ba"
 workers_dev = true
 
-# Cloudflare cron is UTC. 22:00 CST = 14:00 UTC.
-# One catch-up 20 minutes later; GitHub schedule: is not used.
+# Cloudflare cron is UTC. 23:30 CST = 15:30 UTC.
+# Catch-up 10 minutes later so posting still finishes before midnight.
+# GitHub schedule: is not used.
 [triggers]
-crons = ["0 14 * * *", "20 14 * * *"]
+crons = ["30 15 * * *", "40 15 * * *"]

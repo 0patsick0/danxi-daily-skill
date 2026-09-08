@@ -296,7 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--post-at",
         type=_hhmm_or_none,
         default=(os.getenv("DANXI_POST_AT") or "").strip() or None,
-        help="Only post at/after local HH:MM each day. Example: 22:00",
+        help="Only post at/after local HH:MM each day. Example: 23:30",
     )
     parser.add_argument(
         "--post-window-minutes",

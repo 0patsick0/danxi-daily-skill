@@ -8,12 +8,12 @@ The runner stays GitHub Actions. The **clock must be cloud-side**, not this
 PC.
 
 ```
-22:00 CST  Cloudflare Worker cron (primary)
-22:20 CST  Cloudflare Worker catch-up
+23:30 CST  Cloudflare Worker cron (primary)
+23:40 CST  Cloudflare Worker catch-up
          |
          v
 GitHub Actions  workflow_dispatch only
-  --post --post-once-per-day --post-at 22:00 --post-window-minutes 60
+  --post --post-once-per-day --post-at 23:30 --post-window-minutes 30
 on failure: open a GitHub issue
 ```
 
@@ -28,17 +28,17 @@ so the real 22:00 digest was skipped.
 
 ## Guards now in place
 
-1. Cloudflare Worker cron is the only clock (`0 14 * * *`, `20 14 * * *` UTC).
+1. Cloudflare Worker cron is the only clock (`30 15 * * *`, `40 15 * * *` UTC).
 2. GitHub workflow is `workflow_dispatch` only. `schedule` events are ignored
    even if the trigger is re-added.
-3. `--post-at 22:00` is the day boundary, not calendar midnight.
-4. `--post-window-minutes 60` refuses anything after 23:00, including delayed
+3. `--post-at 23:30` is the day boundary, not calendar midnight.
+4. `--post-window-minutes 30` refuses anything after midnight, including delayed
    overnight runs.
 5. A due skip (already posted / too early / outside window) exits before
-   fetching, so a 22:20 catch-up does not burn WebVPN or fail on an expired
-   token after 22:00 already succeeded.
+   fetching, so a 23:40 catch-up does not burn WebVPN or fail on an expired
+   token after 23:30 already succeeded.
 
-Overlapping fires inside the window are safe: at most one post per 22:00
+Overlapping fires inside the window are safe: at most one post per 23:30
 post-day.
 
 ## Clock A (active): Cloudflare Worker
@@ -62,7 +62,7 @@ campus account.
 ## Workflow behavior
 
 - Runs `scripts/generate_daily.py` with `--post`, WebVPN force mode,
-  `--post-once-per-day`, `--post-at 22:00`, `--post-window-minutes 60`
+  `--post-once-per-day`, `--post-at 23:30`, `--post-window-minutes 30`
 - Uploads `outputs/daily.md`, `outputs/ranked.json`, `outputs/holes.raw.json`
 - Default branch only; never `schedule`
 - After a successful post, commits `outputs/last_post.sha256` and
@@ -76,7 +76,7 @@ scripts/dispatch_daily.ps1
 scripts/dispatch_daily.ps1 -OnlyIfMissed
 ```
 
-Manual real posts outside 22:00-23:00 Asia/Shanghai are skipped.
+Manual real posts outside 23:30-00:00 Asia/Shanghai are skipped.
 
 ## Local generate (optional, not the daily clock)
 

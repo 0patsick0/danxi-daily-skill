@@ -60,8 +60,8 @@ jobs:
 
           # GitHub Actions runners cannot reach campus endpoints directly.
           # Use WebVPN force mode; API token auto-refreshes via WebVPN on expiry.
-          # Day boundary is 22:00 Asia/Shanghai, not calendar midnight.
-          # Post window is 22:00-23:00 so a delayed trigger at 01:00 cannot publish.
+          # Day boundary is 23:30 Asia/Shanghai, not calendar midnight.
+          # Post window is 23:30-00:00 so a delayed trigger at 01:00 cannot publish.
           args=(
             --hours 24
             --top 12
@@ -69,8 +69,8 @@ jobs:
             --webvpn-mode force
             --webvpn-no-prompt
             --post-once-per-day
-            --post-at 22:00
-            --post-window-minutes 60
+            --post-at 23:30
+            --post-window-minutes 30
             --verbose
           )
 
