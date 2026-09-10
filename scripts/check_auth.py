@@ -69,7 +69,7 @@ class _PageShape(HTMLParser):
 
 class DiagnosticWebVPNClient(WebVPNClient):
     def __init__(self, credentials: WebVPNCredentials) -> None:
-        super().__init__(credentials, timeout=25)
+        super().__init__(credentials, timeout=60)
         self.max_retries = 1
         self._diagnostic_secrets = {credentials.username, credentials.password}
         self._step = 0
@@ -148,7 +148,7 @@ class DiagnosticWebVPNClient(WebVPNClient):
         method = request.get_method() if isinstance(request, urllib.request.Request) else "GET"
         self._emit(step=step, event="request", method=method, url=self._url_shape(url))
         try:
-            body, final_url = super()._attempt_open_with_retries(opener, request, min(timeout, 25))
+            body, final_url = super()._attempt_open_with_retries(opener, request, min(timeout, 60))
         except Exception as exc:
             cookies = self._cookies()
             self._emit(step=step, event="request_failed", error=self._safe(str(exc)), cookies=cookies)
