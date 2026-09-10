@@ -5,9 +5,9 @@ import json
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, WebVPNError, _PreserveMethodRedirectHandler
+from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, WebVPNError, _PreserveMethodRedirectHandler, is_webvpn_login_response
 
 
 def _http_error(code: int, body: dict[str, str]) -> urllib.error.HTTPError:
@@ -246,6 +246,210 @@ class WebvpnTokenTests(unittest.TestCase):
 
         self.assertFalse(client._authenticated)
         self.assertIsNot(client._cookie_jar, old_jar)
+
+    def test_post_response_timeout_is_not_replayed(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        opener = MagicMock()
+        response = opener.open.return_value.__enter__.return_value
+        # The server may have created the post before the response times out.
+        response.read.side_effect = TimeoutError("response timed out")
+        request = urllib.request.Request("https://webvpn.fudan.edu.cn/api/holes", data=b"{}", method="POST")
+
+        with patch("danxi_daily.webvpn.time.sleep") as sleep:
+            with self.assertRaises(TimeoutError):
+                client._attempt_open_with_retries(opener, request, 10)
+
+        self.assertEqual(opener.open.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_get_response_timeout_can_be_retried(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        opener = MagicMock()
+        response = opener.open.return_value.__enter__.return_value
+        response.read.side_effect = [TimeoutError("response timed out"), b'{"ok": true}']
+        response.geturl.return_value = "https://webvpn.fudan.edu.cn/api/holes"
+
+        with patch("danxi_daily.webvpn.time.sleep"):
+            body, _ = client._attempt_open_with_retries(opener, response.geturl.return_value, 10)
+
+        self.assertEqual(json.loads(body), {"ok": True})
+        self.assertEqual(opener.open.call_count, 2)
+
+    def test_http_auth_failure_is_not_retried_by_transport(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        opener = MagicMock()
+        opener.open.side_effect = _http_error(401, {"exp": "token expired"})
+
+        with patch("danxi_daily.webvpn.time.sleep") as sleep:
+            with self.assertRaises(urllib.error.HTTPError):
+                client._attempt_open_with_retries(opener, "https://webvpn.fudan.edu.cn/api/holes", 10)
+
+        opener.open.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_cas_ticket_returning_login_page_does_not_mark_authenticated(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        responses = [
+            ("", "https://id.fudan.edu.cn/login#/auth?lck=secret&entityId=webvpn"),
+            ("ticket page", "https://id.fudan.edu.cn/idp/authCenter/authnEngine"),
+            ("<html>login</html>", "https://webvpn.fudan.edu.cn/login"),
+        ]
+        with (
+            patch.object(client, "_open", side_effect=responses),
+            patch.object(client, "_load_auth_chain_code", return_value="chain"),
+            patch.object(client, "_load_public_key", return_value=object()),
+            patch.object(client, "_encrypt_password", return_value="encrypted"),
+            patch.object(client, "_execute_cas_auth", return_value="login-token"),
+            patch.object(client, "_extract_target_url_with_ticket", return_value="https://webvpn.fudan.edu.cn/login?ticket=secret"),
+        ):
+            with self.assertRaisesRegex(WebVPNAuthError, "did not establish a session") as ctx:
+                client._ensure_authenticated_via_cas()
+
+        self.assertFalse(client._authenticated)
+        self.assertNotIn("secret", str(ctx.exception))
+
+    def test_cas_accepts_authenticated_portal_with_generic_title(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        with patch.object(client, "_open", return_value=("<html><title>资源访问控制系统</title>Applications</html>", "https://webvpn.fudan.edu.cn/")) as opened:
+            client._ensure_authenticated_via_cas()
+
+        self.assertTrue(client._authenticated)
+        opened.assert_called_once()
+
+    def test_json_containing_login_html_is_not_a_gateway_login_response(self) -> None:
+        body = json.dumps({"id": 123, "content": '<html><form action="/do-login">password</form></html>'})
+        self.assertFalse(is_webvpn_login_response(body, "https://webvpn.fudan.edu.cn/api/holes"))
+
+    def test_login_html_at_original_api_url_is_detected(self) -> None:
+        body = '\n<html><title>资源访问控制系统</title><input name="password"></html>'
+        self.assertTrue(is_webvpn_login_response(body, "https://webvpn.fudan.edu.cn/api/holes"))
+
+    def test_request_json_recovers_login_page_once_with_same_token(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        responses = [
+            ("<html>CAS</html>", "https://id.fudan.edu.cn/login#/auth?lck=hidden"),
+            ('{"items": []}', "https://webvpn.fudan.edu.cn/mock"),
+        ]
+        with (
+            patch.object(client, "_ensure_authenticated") as authenticated,
+            patch.object(client, "reset_session", wraps=client.reset_session) as reset,
+            patch.object(client, "_open", side_effect=responses) as opened,
+        ):
+            result = client.request_json("https://forum.fduhole.com/api/holes", params={}, token="read-token", timeout=10)
+
+        self.assertEqual(result, {"items": []})
+        self.assertEqual(authenticated.call_count, 2)
+        reset.assert_called_once()
+        self.assertEqual(opened.call_count, 2)
+        for call in opened.call_args_list:
+            self.assertEqual(call.args[0].get_header("Authorization"), "Bearer read-token")
+
+    def test_request_json_stops_after_second_login_page(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        with (
+            patch.object(client, "_ensure_authenticated"),
+            patch.object(client, "_open", return_value=("<html>login</html>", "https://webvpn.fudan.edu.cn/login")) as opened,
+        ):
+            with self.assertRaisesRegex(WebVPNAuthError, "still expired after re-authentication"):
+                client.request_json("https://forum.fduhole.com/api/holes", params={}, token="read-token", timeout=10)
+
+        self.assertEqual(opened.call_count, 2)
+        self.assertFalse(client._authenticated)
+
+    def test_request_json_retries_malformed_response_without_password_attempt(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        client._authenticated = True
+        with (
+            patch.object(client, "_ensure_authenticated_via_cas") as authenticate,
+            patch.object(client, "reset_session") as reset,
+            patch.object(client, "_open", side_effect=[("<html>Bad gateway</html>", "https://webvpn.fudan.edu.cn/mock"), ('{"items": []}', "https://webvpn.fudan.edu.cn/mock")]) as opened,
+        ):
+            result = client.request_json("https://forum.fduhole.com/api/holes", params={}, token="read-token", timeout=10)
+
+        self.assertEqual(result, {"items": []})
+        self.assertEqual(opened.call_count, 2)
+        authenticate.assert_not_called()
+        reset.assert_not_called()
+
+    def test_request_json_preserves_expired_token_reason_without_gateway_relogin(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"), allowed_hosts={"forum.fduhole.com"})
+        with (
+            patch.object(client, "_ensure_authenticated"),
+            patch.object(client, "reset_session") as reset,
+            patch.object(client, "_open", side_effect=_http_error(401, {"exp": "token expired"})) as opened,
+        ):
+            with self.assertRaisesRegex(WebVPNError, "HTTP 401: token expired"):
+                client.request_json("https://forum.fduhole.com/api/holes", params={}, token="read-token", timeout=10)
+
+        opened.assert_called_once()
+        reset.assert_not_called()
+
+    def test_token_request_recovers_gateway_session_before_changing_email(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="student", password="password"))
+        responses = [
+            ("<html>login</html>", "https://webvpn.fudan.edu.cn/login"),
+            ('{"access": "new-token"}', "https://webvpn.fudan.edu.cn/mock"),
+        ]
+        with (
+            patch.object(client, "_ensure_authenticated") as authenticated,
+            patch.object(client, "reset_session", wraps=client.reset_session) as reset,
+            patch.object(client, "_open_following_post_redirects", side_effect=responses) as opened,
+        ):
+            token = client.obtain_forum_api_token()
+
+        self.assertEqual(token, "new-token")
+        self.assertEqual(authenticated.call_count, 2)
+        reset.assert_called_once()
+        emails = [json.loads(call.args[0].data)["email"] for call in opened.call_args_list]
+        self.assertEqual(emails, ["student@m.fudan.edu.cn", "student@m.fudan.edu.cn"])
+
+    def test_token_request_repeated_login_page_stops_after_one_recovery(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="student", password="password"))
+        with (
+            patch.object(client, "_ensure_authenticated"),
+            patch.object(client, "_open_following_post_redirects", return_value=("<html>login</html>", "https://webvpn.fudan.edu.cn/login")) as opened,
+        ):
+            with self.assertRaisesRegex(WebVPNAuthError, "still returned a login page after WebVPN re-authentication"):
+                client.obtain_forum_api_token()
+
+        self.assertEqual(opened.call_count, 2)
+        self.assertFalse(client._authenticated)
+
+    def test_token_request_network_failure_does_not_try_another_email(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="student", password="password"))
+        with (
+            patch.object(client, "_ensure_authenticated"),
+            patch.object(client, "_open_following_post_redirects", side_effect=TimeoutError("read timed out")) as opened,
+        ):
+            with self.assertRaisesRegex(WebVPNAuthError, "forum login network error: read timed out"):
+                client.obtain_forum_api_token()
+
+        opened.assert_called_once()
+
+    def test_token_request_malformed_response_does_not_try_another_password(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="student", password="password"))
+        with (
+            patch.object(client, "_ensure_authenticated"),
+            patch.object(client, "reset_session") as reset,
+            patch.object(client, "_open_following_post_redirects", return_value=("<html>Bad gateway</html>", "https://webvpn.fudan.edu.cn/mock")) as opened,
+        ):
+            with self.assertRaisesRegex(WebVPNAuthError, "forum login returned a non-JSON response"):
+                client.obtain_forum_api_token()
+
+        opened.assert_called_once()
+        reset.assert_not_called()
+
+    def test_authentication_error_redacts_credentials_tokens_and_ticket_urls(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="student123", password="private-password"))
+        message = "denied for student123; password=private-password token=opaque-secret https://id.fudan.edu.cn/login?ticket=cas-secret"
+        with patch.object(client, "_post_json", return_value={"message": message}):
+            with self.assertRaises(WebVPNAuthError) as ctx:
+                client._execute_cas_auth("lck", "entity", "chain", "encrypted")
+
+        detail = str(ctx.exception)
+        self.assertIn("denied", detail)
+        for secret in ("student123", "private-password", "opaque-secret", "cas-secret"):
+            self.assertNotIn(secret, detail)
 
 
 if __name__ == "__main__":

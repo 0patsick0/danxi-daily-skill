@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import unittest
+import io
+import urllib.error
 from unittest.mock import Mock
+from unittest.mock import patch
 
-from danxi_daily.poster import post_markdown
-from danxi_daily.webvpn import WEBVPN_HOST
+from danxi_daily.poster import PostError, post_markdown
+from danxi_daily.webvpn import WEBVPN_HOST, WebVPNAuthError, translate_to_webvpn
 
 
 class PosterWebvpnSessionExpiryTests(unittest.TestCase):
@@ -49,7 +52,7 @@ class PosterWebvpnSessionExpiryTests(unittest.TestCase):
         self.assertEqual(client.reset_session.call_count, 1)
         self.assertEqual(client._ensure_authenticated.call_count, 2)
 
-    def test_expired_session_still_expired_after_reauth_returns_401(self) -> None:
+    def test_expired_session_still_expired_after_reauth_raises_auth_error(self) -> None:
         client = self._make_client()
         login_url = f"https://{WEBVPN_HOST}/login?cas_login=true"
         client._open.side_effect = [
@@ -57,15 +60,13 @@ class PosterWebvpnSessionExpiryTests(unittest.TestCase):
             ("<html></html>", login_url),
         ]
 
-        status, body = post_markdown(
-            "https://forum.fduhole.com/api/holes",
-            token="t",
-            content="hello",
-            webvpn_client=client,
-        )
-
-        self.assertEqual(status, 401)
-        self.assertIn("session expired", body)
+        with self.assertRaisesRegex(WebVPNAuthError, "session expired"):
+            post_markdown(
+                "https://forum.fduhole.com/api/holes",
+                token="t",
+                content="hello",
+                webvpn_client=client,
+            )
         self.assertEqual(client._open.call_count, 2)
 
     def test_fallback_content_sniff_still_detects_expiry_when_url_unchanged(self) -> None:
@@ -74,7 +75,7 @@ class PosterWebvpnSessionExpiryTests(unittest.TestCase):
         # must still catch it.
         client = self._make_client()
         client._open.side_effect = [
-            ("<html>资源访问控制系统</html>", "https://webvpn.fudan.edu.cn/https/xxx/api/holes"),
+            ('<html>资源访问控制系统<form action="/do-login"><input name="password"></form></html>', "https://webvpn.fudan.edu.cn/https/xxx/api/holes"),
             ('{"ok": true}', "https://webvpn.fudan.edu.cn/https/xxx/api/holes"),
         ]
 
@@ -88,6 +89,43 @@ class PosterWebvpnSessionExpiryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, '{"ok": true}')
         self.assertEqual(client._open.call_count, 2)
+
+    def test_proxy_error_html_is_not_success_and_is_not_replayed(self) -> None:
+        client = self._make_client()
+        client._open.return_value = ("<html>upstream unavailable</html>", "https://webvpn.fudan.edu.cn/https/xxx/api/holes")
+        with self.assertRaisesRegex(PostError, "non-JSON"):
+            post_markdown("https://forum.fduhole.com/api/holes", "t", "hello", webvpn_client=client)
+        self.assertEqual(client._open.call_count, 1)
+        client.reset_session.assert_not_called()
+
+    def test_forum_401_remains_distinct_from_webvpn_session_failure(self) -> None:
+        client = self._make_client()
+        client._open.side_effect = urllib.error.HTTPError(
+            translate_to_webvpn("https://forum.fduhole.com/api/holes"), 401, "Unauthorized", {}, io.BytesIO(b'{"exp":"token expired"}')
+        )
+        status, _ = post_markdown("https://forum.fduhole.com/api/holes", "t", "hello", webvpn_client=client)
+        self.assertEqual(status, 401)
+        client.reset_session.assert_not_called()
+
+    def test_cas_401_is_not_treated_as_forum_token_expiry(self) -> None:
+        for stage in ("_ensure_authenticated", "_open"):
+            with self.subTest(stage=stage):
+                client = self._make_client()
+                getattr(client, stage).side_effect = urllib.error.HTTPError(
+                    "https://id.fudan.edu.cn/idp/authn/authExecute", 401, "Unauthorized", {}, io.BytesIO(b"CAS rejected")
+                )
+                with self.assertRaises(WebVPNAuthError):
+                    post_markdown("https://forum.fduhole.com/api/holes", "t", "hello", webvpn_client=client)
+                client.obtain_forum_api_token.assert_not_called()
+
+    @patch("danxi_daily.poster._SAFE_OPENER")
+    def test_direct_http_error_is_reported_to_pipeline(self, opener) -> None:
+        opener.open.side_effect = urllib.error.HTTPError(
+            "https://forum.fduhole.com/api/holes", 401, "Unauthorized", {}, io.BytesIO(b'{"exp":"token expired"}')
+        )
+        status, _ = post_markdown("https://forum.fduhole.com/api/holes", "t", "hello")
+        self.assertEqual(status, 401)
+        opener.open.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from http.cookiejar import CookieJar
 from typing import Any
 
+from danxi_daily.security import safe_error_message
+
 try:
     from Crypto.Cipher import AES
     from Crypto.Cipher import PKCS1_v1_5
@@ -179,6 +181,27 @@ def _json_headers(token: str | None) -> dict[str, str]:
     return headers
 
 
+def is_webvpn_login_response(body: str, final_url: str) -> bool:
+    """Recognize a gateway/CAS login response without logging its URL or HTML."""
+    parsed = urllib.parse.urlparse(final_url)
+    host = (parsed.hostname or "").lower()
+    if host == _ID_HOST:
+        return True
+    if host == WEBVPN_HOST and parsed.path.rstrip("/") in {"/login", "/do-login"}:
+        return True
+    lowered = body.lstrip("\ufeff \t\r\n")[:32768].lower()
+    if not lowered.startswith(("<html", "<!doctype html")):
+        return False
+    # The portal itself can use the same title as its login page. Require a
+    # login control or redirect marker as well, rather than matching the title.
+    return (
+        "cas_login" in lowered
+        or "/do-login" in lowered
+        or ("资源访问控制系统" in lowered and "password" in lowered)
+        or ("id.fudan.edu.cn" in lowered and ("login" in lowered or "authn" in lowered))
+    )
+
+
 class WebVPNClient:
     def __init__(
         self,
@@ -209,6 +232,12 @@ class WebVPNClient:
             urllib.request.HTTPCookieProcessor(self._cookie_jar),
         )
 
+    def _safe_error_detail(self, value: Any) -> str:
+        """Keep the reason, but never echo credentials, tokens or CAS tickets."""
+        return safe_error_message(
+            str(value), secrets=(self.credentials.username, self.credentials.password)
+        )[:200]
+
     def _attempt_open_with_retries(
         self,
         opener: Any,
@@ -217,15 +246,21 @@ class WebVPNClient:
     ) -> tuple[str, str]:
         last_error: Exception | None = None
         current_timeout = max(float(timeout), 1.0)
-        for attempt in range(self.max_retries):
+        method = request.get_method() if isinstance(request, urllib.request.Request) else "GET"
+        # A timed-out POST may already have created a forum post. Only reads
+        # are safe to replay here; authentication retries must be explicit.
+        attempts = self.max_retries if method in {"GET", "HEAD"} else 1
+        for attempt in range(attempts):
             try:
                 with opener.open(request, timeout=current_timeout) as resp:
                     body = resp.read().decode("utf-8", errors="replace")
                     final_url = resp.geturl()
                 return body, final_url
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if isinstance(exc, urllib.error.HTTPError) and exc.code not in {408, 429, 500, 502, 503, 504}:
+                    raise
                 last_error = exc
-                if attempt == self.max_retries - 1:
+                if attempt == attempts - 1:
                     break
                 time.sleep(self.backoff_base * (2 ** attempt))
                 current_timeout = min(current_timeout * self.timeout_scale, current_timeout + 20.0)
@@ -348,7 +383,7 @@ class WebVPNClient:
         if isinstance(token, str) and token:
             return token
 
-        message = str(data.get("message") or "")
+        message = self._safe_error_detail(data.get("message") or "")
         raise WebVPNAuthError(f"CAS auth failed: {message or 'missing loginToken'}")
 
     def _extract_target_url_with_ticket(self, html: str) -> str:
@@ -396,8 +431,9 @@ class WebVPNClient:
         )
 
     def _ensure_authenticated_via_cas(self) -> None:
-        _, final_url = self._open(WEBVPN_LOGIN_URL)
-        if final_url.startswith(f"https://{WEBVPN_HOST}/") and "login" not in final_url:
+        self._authenticated = False
+        body, final_url = self._open(WEBVPN_LOGIN_URL)
+        if self._is_authenticated_landing(body, final_url):
             self._authenticated = True
             return
 
@@ -419,8 +455,21 @@ class WebVPNClient:
         )
         body, _ = self._open(req)
         target_url = self._extract_target_url_with_ticket(body)
-        self._open(target_url)
+        target = urllib.parse.urlparse(target_url)
+        if target.scheme != "https" or target.hostname != WEBVPN_HOST or target.username or target.password:
+            raise WebVPNAuthError("CAS ticket redirect has an unexpected target")
+        body, final_url = self._open(target_url)
+        if not self._is_authenticated_landing(body, final_url):
+            raise WebVPNAuthError("webvpn CAS login did not establish a session; login page or unexpected landing returned")
         self._authenticated = True
+
+    def _is_authenticated_landing(self, body: str, final_url: str) -> bool:
+        parsed = urllib.parse.urlparse(final_url)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == WEBVPN_HOST
+            and not is_webvpn_login_response(body, final_url)
+        )
 
     def _ensure_authenticated_via_local(self) -> None:
         try:
@@ -447,7 +496,7 @@ class WebVPNClient:
             )
             body, _ = self._open(req)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise WebVPNAuthError(f"webvpn login request failed: {exc}") from exc
+            raise WebVPNAuthError(f"webvpn login request failed: {self._safe_error_detail(exc)}") from exc
 
         try:
             result = json.loads(body)
@@ -458,17 +507,19 @@ class WebVPNClient:
             raise WebVPNAuthError("webvpn login response has unexpected format")
 
         if not result.get("success"):
-            err = str(result.get("error") or "unknown_error")
-            msg = str(result.get("message") or "")
+            err = self._safe_error_detail(result.get("error") or "unknown_error")
+            msg = self._safe_error_detail(result.get("message") or "")
             raise WebVPNAuthError(f"webvpn login failed: {err} {msg}".strip())
 
         redirect_url = str(result.get("url") or "/")
         absolute_url = urllib.parse.urljoin(WEBVPN_LOGIN_URL, redirect_url)
         try:
-            self._open(absolute_url)
+            body, final_url = self._open(absolute_url)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise WebVPNAuthError(f"webvpn post-login redirect failed: {exc}") from exc
+            raise WebVPNAuthError(f"webvpn post-login redirect failed: {self._safe_error_detail(exc)}") from exc
 
+        if not self._is_authenticated_landing(body, final_url):
+            raise WebVPNAuthError("webvpn local login did not establish a session")
         self._authenticated = True
 
     def _ensure_authenticated(self) -> None:
@@ -492,7 +543,7 @@ class WebVPNClient:
             if isinstance(data, dict):
                 message = data.get("message")
                 if isinstance(message, str) and message.strip():
-                    return message
+                    return self._safe_error_detail(message)
         except Exception:
             pass
         return f"HTTP {exc.code}"
@@ -509,7 +560,7 @@ class WebVPNClient:
         try:
             self._ensure_authenticated()
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise WebVPNAuthError(f"webvpn auth session init failed: {exc}") from exc
+            raise WebVPNAuthError(f"webvpn auth session init failed: {self._safe_error_detail(exc)}") from exc
 
         proxied_login_url = translate_to_webvpn(
             f"https://{_AUTH_HOST}/api/login",
@@ -519,6 +570,7 @@ class WebVPNClient:
             raise WebVPNAuthError("cannot build auth service webvpn url")
 
         last_error: str = "login failed"
+        recovered_session = False
         for email in self._candidate_forum_emails():
             payload = {
                 "email": email,
@@ -536,7 +588,19 @@ class WebVPNClient:
             )
 
             try:
-                body, _ = self._open_following_post_redirects(req, timeout=max(self.timeout, 30))
+                body, final_url = self._open_following_post_redirects(req, timeout=max(self.timeout, 30))
+                if is_webvpn_login_response(body, final_url):
+                    if recovered_session:
+                        raise WebVPNAuthError("forum token request still returned a login page after WebVPN re-authentication")
+                    recovered_session = True
+                    self.reset_session()
+                    self._ensure_authenticated()
+                    # The gateway login response confirms this did not reach
+                    # the forum login endpoint. Retry the same email once.
+                    body, final_url = self._open_following_post_redirects(req, timeout=max(self.timeout, 30))
+                    if is_webvpn_login_response(body, final_url):
+                        self._authenticated = False
+                        raise WebVPNAuthError("forum token request still returned a login page after WebVPN re-authentication")
                 data = json.loads(body)
                 if not isinstance(data, dict):
                     raise WebVPNAuthError("auth login response format is invalid")
@@ -546,14 +610,21 @@ class WebVPNClient:
                 raise WebVPNAuthError("auth login response missing access token")
             except urllib.error.HTTPError as exc:
                 message = self._parse_auth_error_message(exc)
-                last_error = f"{email}: {message}"
-                continue
+                last_error = f"forum login HTTP {exc.code}: {message}"
+                # Only a definite rejection can justify trying the alternate
+                # forum email. Network/server errors are not account errors.
+                if exc.code in {400, 401, 403, 404}:
+                    continue
+                break
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                last_error = f"{email}: network error: {exc}"
-                continue
-            except (json.JSONDecodeError, WebVPNAuthError) as exc:
-                last_error = f"{email}: {exc}"
-                continue
+                last_error = f"forum login network error: {self._safe_error_detail(exc)}"
+                break
+            except json.JSONDecodeError:
+                last_error = "forum login returned a non-JSON response"
+                break
+            except WebVPNAuthError as exc:
+                last_error = self._safe_error_detail(exc)
+                break
 
         raise WebVPNAuthError(f"cannot obtain DANXI_API_TOKEN via WebVPN: {last_error}")
 
@@ -574,30 +645,45 @@ class WebVPNClient:
         if not proxied_url:
             raise WebVPNError("url is not supported by webvpn")
 
-        try:
-            self._ensure_authenticated()
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise WebVPNAuthError(f"webvpn auth session init failed: {exc}") from exc
-
         req = urllib.request.Request(proxied_url, method="GET", headers=_json_headers(token))
-        try:
-            payload, final_url = self._open(req, timeout=timeout)
-        except urllib.error.HTTPError as exc:
-            detail = ""
+        for attempt in range(2):
             try:
-                detail = exc.read().decode("utf-8", errors="replace").strip()
-            except Exception:
+                self._ensure_authenticated()
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise WebVPNAuthError(f"webvpn auth session init failed: {self._safe_error_detail(exc)}") from exc
+
+            try:
+                payload, final_url = self._open(req, timeout=timeout)
+            except urllib.error.HTTPError as exc:
                 detail = ""
-            extra = f" body={detail[:200]}" if detail else ""
-            raise WebVPNError(f"webvpn request failed: HTTP {exc.code} {exc.reason}{extra}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise WebVPNError(f"webvpn request failed: {exc}") from exc
+                try:
+                    data = json.loads(exc.read().decode("utf-8", errors="replace"))
+                    if isinstance(data, dict):
+                        for key in ("exp", "message", "error", "detail"):
+                            value = data.get(key)
+                            if isinstance(value, str):
+                                detail = self._safe_error_detail(value)
+                                break
+                except (ValueError, OSError):
+                    pass
+                extra = f": {detail}" if detail else ""
+                raise WebVPNError(f"webvpn request failed: HTTP {exc.code}{extra}") from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise WebVPNError(f"webvpn request failed: {self._safe_error_detail(exc)}") from exc
 
-        if final_url.startswith(f"https://{WEBVPN_HOST}/login"):
-            self._authenticated = False
-            raise WebVPNAuthError("webvpn session expired")
+            if is_webvpn_login_response(payload, final_url):
+                self.reset_session()
+                if attempt == 0:
+                    continue
+                raise WebVPNAuthError("webvpn session still expired after re-authentication")
 
-        try:
-            return json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise WebVPNError("webvpn response is not valid JSON") from exc
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError as exc:
+                if attempt == 0:
+                    # A malformed gateway response can be transient. Re-read
+                    # once without spending another password attempt.
+                    continue
+                raise WebVPNError("webvpn response is not valid JSON after one read retry") from exc
+
+        raise AssertionError("unreachable")

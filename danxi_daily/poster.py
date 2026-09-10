@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
+
+
+class PostError(RuntimeError):
+    """Publishing failed; callers must not restart the whole pipeline."""
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -53,7 +58,7 @@ def post_markdown(
     
     if webvpn_client:
         # Proxy through WebVPN
-        from danxi_daily.webvpn import WEBVPN_HOST, translate_to_webvpn
+        from danxi_daily.webvpn import WebVPNAuthError, is_webvpn_login_response, translate_to_webvpn
         proxied_url = translate_to_webvpn(endpoint, allowed_hosts=webvpn_client.allowed_hosts)
         if not proxied_url:
             raise ValueError(f"post endpoint {endpoint} is not supported by webvpn")
@@ -69,33 +74,45 @@ def post_markdown(
             data=json.dumps(payload).encode("utf-8"),
         )
 
-        def _session_expired(body: str, final_url: str) -> bool:
-            # If WebVPN session died during the long generation process, it silently
-            # redirects to the CAS login page instead of raising an HTTP error.
-            # Prefer the redirect target — the same signal webvpn.py's request_json()
-            # uses — and fall back to a content sniff in case the login page URL
-            # ever changes shape.
-            if final_url.startswith(f"https://{WEBVPN_HOST}/login"):
-                return True
-            return "资源访问控制系统" in body and "<html" in body
+        def authenticate() -> None:
+            try:
+                webvpn_client._ensure_authenticated()
+            except urllib.error.HTTPError as exc:
+                # A CAS rejection must not masquerade as a forum token expiry.
+                raise WebVPNAuthError(f"WebVPN authentication failed: HTTP {exc.code}") from exc
 
         try:
-            webvpn_client._ensure_authenticated()
+            authenticate()
             body, final_url = webvpn_client._open(req, timeout=timeout)
 
-            if _session_expired(body, final_url):
+            if is_webvpn_login_response(body, final_url):
                 reset_session = getattr(webvpn_client, "reset_session", None)
                 if callable(reset_session):
                     reset_session()
                 else:
                     webvpn_client._authenticated = False
-                webvpn_client._ensure_authenticated()
+                authenticate()
                 body, final_url = webvpn_client._open(req, timeout=timeout)
-                if _session_expired(body, final_url):
-                    return 401, "WebVPN session expired and re-authentication failed"
+                if is_webvpn_login_response(body, final_url):
+                    raise WebVPNAuthError("WebVPN session expired and re-authentication failed")
+
+            # A proxy HTML page is not confirmation that the forum accepted the
+            # report. Do not mark it posted or replay this ambiguous response.
+            try:
+                result = json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise PostError("Posting returned a non-JSON response; delivery is unconfirmed") from exc
+            if not isinstance(result, dict):
+                raise PostError("Posting returned an unexpected response; delivery is unconfirmed")
 
             return 200, body  # WebVPN _open doesn't return status directly but raises HTTPError on >=400
         except urllib.error.HTTPError as exc:
+            failed = urllib.parse.urlparse(exc.url)
+            expected = urllib.parse.urlparse(proxied_url)
+            if (failed.scheme, failed.netloc, failed.path.rstrip("/")) != (
+                expected.scheme, expected.netloc, expected.path.rstrip("/")
+            ):
+                raise WebVPNAuthError(f"Posting was redirected away from the forum: HTTP {exc.code}") from exc
             return exc.code, exc.read().decode("utf-8", errors="replace")
             
     # Direct post
@@ -109,6 +126,9 @@ def post_markdown(
         },
         data=json.dumps(payload).encode("utf-8"),
     )
-    with _SAFE_OPENER.open(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        return resp.status, body
+    try:
+        with _SAFE_OPENER.open(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            return resp.status, body
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")

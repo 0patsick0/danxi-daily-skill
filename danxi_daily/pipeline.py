@@ -13,12 +13,12 @@ from typing import Any
 
 from .client import fetch_hole_floors, fetch_holes_with_fallback, should_prefer_webvpn
 from .models import normalize_hole_id
-from .poster import post_markdown
+from .poster import PostError, post_markdown
 from .ranking import rank_holes
 from .reporter import build_daily_markdown
-from .security import require_https, validate_allowed_host
+from .security import require_https, safe_error_message, validate_allowed_host
 from .utils import ensure_parent, parse_iso8601, write_json, write_text
-from .webvpn import WebVPNClient
+from .webvpn import WebVPNClient, WebVPNError
 
 
 @dataclass
@@ -371,6 +371,51 @@ def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]],
     return filtered, endpoint
 
 
+def _post_report(config: PipelineConfig, report: str, token: str, *, use_webvpn: bool) -> tuple[int, str]:
+    """Retry only an explicit forum auth rejection, using the same report."""
+    assert config.post_endpoint is not None
+    secrets = [config.api_token or "", config.post_token or "", token]
+    if config.webvpn_client is not None:
+        credentials = config.webvpn_client.credentials
+        secrets.extend(value for value in (credentials.username, credentials.password) if isinstance(value, str))
+    stage = "publishing report"
+    try:
+        for attempt in range(2):
+            status, body = post_markdown(
+                endpoint=config.post_endpoint,
+                token=token,
+                content=report,
+                timeout=config.timeout,
+                division_id=config.division_id or 1,
+                webvpn_client=config.webvpn_client if use_webvpn else None,
+            )
+            if 200 <= status < 300:
+                return status, body
+            if status != 401 or attempt or config.webvpn_client is None:
+                detail = safe_error_message(body, secrets=secrets)
+                raise PostError(f"Publishing failed: HTTP {status}; {detail}")
+
+            # A WebVPN login-page failure raises WebVPNAuthError, not this 401.
+            # Only a confirmed forum rejection is safe to retry with a new token.
+            stage = "refreshing forum token after publishing HTTP 401"
+            refreshed = config.webvpn_client.obtain_forum_api_token()
+            if not isinstance(refreshed, str) or not refreshed.strip():
+                raise PostError("Forum token refresh returned no token after publishing HTTP 401")
+            token = refreshed.strip()
+            secrets.append(token)
+            config.api_token = config.post_token = token
+            skip, reason, _ = _should_skip_post_for_schedule(config, datetime.now().astimezone())
+            if skip:
+                raise PostError(f"Publishing retry skipped after token refresh: {reason}")
+            stage = "publishing report after token refresh"
+    except PostError:
+        raise
+    except (WebVPNError, OSError) as exc:
+        detail = safe_error_message(exc, secrets=secrets)
+        raise PostError(f"Failed while {stage}: {detail}") from exc
+    raise PostError("Publishing failed after authentication retry")
+
+
 def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
     for url in config.base_urls:
         require_https(url)
@@ -606,18 +651,12 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
                             "reason": "duplicate_content",
                         }
                     else:
-                        status, body = post_markdown(
-                            endpoint=config.post_endpoint,
-                            token=token,
-                            content=report,
-                            timeout=config.timeout,
-                            division_id=config.division_id or 1,
-                            webvpn_client=config.webvpn_client if prefer_webvpn_for_floors else None,
+                        status, body = _post_report(
+                            config, report, token, use_webvpn=prefer_webvpn_for_floors,
                         )
-                        if status < 300:
-                            write_text(config.post_dedupe_file, new_hash)
-                            if current_slot:
-                                write_text(config.post_schedule_state_file, current_slot)
+                        write_text(config.post_dedupe_file, new_hash)
+                        if current_slot:
+                            write_text(config.post_schedule_state_file, current_slot)
 
                         post_result = {"status": status}
                         if config.verbose:

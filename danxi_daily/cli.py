@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 
 from .pipeline import PipelineConfig, run_pipeline
-from .security import normalize_allowed_hosts, require_https, validate_allowed_host
+from .poster import PostError
+from .security import normalize_allowed_hosts, require_https, safe_error_message, validate_allowed_host
 from .webvpn import WebVPNAuthError, WebVPNClient, WebVPNCredentials, WebVPNError
 
 
@@ -186,10 +187,10 @@ def _refresh_api_token(
 ) -> str | None:
     if webvpn_client is None:
         return None
-    try:
-        refreshed = webvpn_client.obtain_forum_api_token()
-    except (WebVPNAuthError, WebVPNError):
-        return None
+    # A failed request can leave the session flag set after its cookies expire.
+    # Rebuild it once before obtaining a replacement forum token.
+    webvpn_client.reset_session()
+    refreshed = webvpn_client.obtain_forum_api_token()
 
     if not isinstance(refreshed, str) or not refreshed.strip():
         return None
@@ -199,6 +200,30 @@ def _refresh_api_token(
         _upsert_dotenv(env_path, "DANXI_API_TOKEN", token)
         os.environ.setdefault("DANXI_API_TOKEN", token)
     return token
+
+
+def _safe_pipeline_error(exc: BaseException, config: PipelineConfig) -> str:
+    credentials = getattr(config.webvpn_client, "credentials", None)
+    secrets = [
+        config.api_token,
+        config.post_token,
+        getattr(credentials, "username", None),
+        getattr(credentials, "password", None),
+        *(os.getenv(name) for name in (
+            "DANXI_API_TOKEN", "DANXI_POST_TOKEN", "DANXI_WEBVPN_USERNAME", "DANXI_WEBVPN_PASSWORD"
+        )),
+    ]
+    return safe_error_message(exc, secrets=(value for value in secrets if isinstance(value, str)))
+
+
+def _run_pipeline_checked(config: PipelineConfig) -> dict[str, object]:
+    result = run_pipeline(config)
+    post_result = result.get("post_result")
+    if isinstance(post_result, dict):
+        status = post_result.get("status")
+        if isinstance(status, (int, float)) and not 200 <= status < 300:
+            raise PostError(f"posting failed: HTTP {status}")
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -409,44 +434,57 @@ def main() -> int:
     )
 
     try:
-        result = run_pipeline(config)
-    except RuntimeError:
-        refreshed_token = _refresh_api_token(args, env_path, config.webvpn_client)
-        if refreshed_token and refreshed_token != config.api_token:
-            config.api_token = refreshed_token
-            # Also update post_token: same session token used for both reading and posting.
-            config.post_token = refreshed_token
-            result = run_pipeline(config)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0
+        result = _run_pipeline_checked(config)
+    except PostError as exc:
+        # Publishing owns its bounded retries. Restarting report generation here
+        # can repeat an uncertain write and conceal its original failure.
+        print(f"[error] {_safe_pipeline_error(exc, config)}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"[warning] pipeline failed: {_safe_pipeline_error(exc, config)}", file=sys.stderr)
+        phase = "forum token refresh"
+        try:
+            refreshed_token = _refresh_api_token(args, env_path, config.webvpn_client)
+            if refreshed_token and refreshed_token != config.api_token:
+                config.api_token = refreshed_token
+                # The forum session token is shared by reads and posts.
+                config.post_token = refreshed_token
+            else:
+                can_retry_with_prompt = (
+                    args.webvpn_mode == "auto"
+                    and webvpn_client is None
+                    and (not args.webvpn_no_prompt)
+                    and sys.stdin.isatty()
+                )
+                if not can_retry_with_prompt:
+                    if config.webvpn_client is not None:
+                        print("[error] forum token refresh returned no replacement token", file=sys.stderr)
+                    return 1
 
-        can_retry_with_prompt = (
-            args.webvpn_mode == "auto"
-            and webvpn_client is None
-            and (not args.webvpn_no_prompt)
-            and sys.stdin.isatty()
-        )
-        if not can_retry_with_prompt:
-            raise
+                prompted = _prompt_webvpn_credentials(args, env_path)
+                if prompted is None:
+                    return 1
 
-        prompted = _prompt_webvpn_credentials(args, env_path)
-        if prompted is None:
-            raise
+                username, password = prompted
+                config.webvpn_client = WebVPNClient(
+                    WebVPNCredentials(username=username, password=password),
+                    timeout=args.timeout,
+                    allowed_hosts=read_allowlist,
+                )
+                config.force_webvpn = True
+                refreshed_after_prompt = _refresh_api_token(args, env_path, config.webvpn_client)
+                if refreshed_after_prompt:
+                    config.api_token = refreshed_after_prompt
+                    config.post_token = refreshed_after_prompt
 
-        username, password = prompted
-        config.webvpn_client = WebVPNClient(
-            WebVPNCredentials(username=username, password=password),
-            timeout=args.timeout,
-            allowed_hosts=read_allowlist,
-        )
-        # For prompted first-time credentials, force a fresh token and prefer WebVPN path for this retry.
-        config.force_webvpn = True
-        refreshed_after_prompt = _refresh_api_token(args, env_path, config.webvpn_client)
-        if refreshed_after_prompt:
-            config.api_token = refreshed_after_prompt
-        else:
-            config.api_token = _maybe_fill_api_token(args, env_path, config.webvpn_client, config.api_token)
-        result = run_pipeline(config)
+            phase = "pipeline retry"
+            result = _run_pipeline_checked(config)
+        except PostError as retry_exc:
+            print(f"[error] {_safe_pipeline_error(retry_exc, config)}", file=sys.stderr)
+            return 1
+        except (RuntimeError, OSError, ValueError) as retry_exc:
+            print(f"[error] {phase} failed: {_safe_pipeline_error(retry_exc, config)}", file=sys.stderr)
+            return 1
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
