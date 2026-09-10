@@ -5,9 +5,31 @@ import json
 import unittest
 import urllib.error
 import urllib.request
+from http.cookiejar import Cookie
 from unittest.mock import MagicMock, patch
 
-from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, WebVPNError, _PreserveMethodRedirectHandler, is_webvpn_login_response
+from danxi_daily.webvpn import WebVPNClient, WebVPNCredentials, WebVPNAuthError, WebVPNError, _PreserveMethodRedirectHandler, is_webvpn_login_response, is_webvpn_api_bounce
+
+
+# Structure observed in the authenticated gateway landing page: no forms or
+# password inputs, but shared scripts still contain login URLs/password markup.
+_AUTHENTICATED_PORTAL_HTML = """<!doctype html>
+<html><head><title>资源访问控制系统 - 资源站点</title></head>
+<body><input type="text" name="search"><div>资源站点</div>
+<script>
+const casLogin = "/login?cas_login=true";
+const loginTemplate = '<form action="/do-login"><input type="password"></form>';
+</script></body></html>"""
+
+
+def _session_cookie(value: str) -> Cookie:
+    return Cookie(
+        version=0, name="wengine_vpn_ticket", value=value,
+        port=None, port_specified=False,
+        domain="webvpn.fudan.edu.cn", domain_specified=False, domain_initial_dot=False,
+        path="/", path_specified=True, secure=True, expires=None, discard=True,
+        comment=None, comment_url=None, rest={}, rfc2109=False,
+    )
 
 
 def _http_error(code: int, body: dict[str, str]) -> urllib.error.HTTPError:
@@ -103,6 +125,78 @@ class WebvpnTokenTests(unittest.TestCase):
         self.assertIsNotNone(redirected)
         assert redirected is not None
         self.assertFalse(any(key.lower() == "authorization" for key, _ in redirected.header_items()))
+
+    def test_preserved_redirect_does_not_copy_stale_cookies(self) -> None:
+        handler = _PreserveMethodRedirectHandler()
+        for code in (307, 308):
+            for target in ("https://webvpn.fudan.edu.cn/next", "https://id.fudan.edu.cn/landing"):
+                with self.subTest(code=code, target=target):
+                    request = urllib.request.Request("https://webvpn.fudan.edu.cn/protected", data=b"{}", method="POST")
+                    request.add_unredirected_header("Cookie", "old-session=value")
+                    request.add_header("Cookie2", "$Version=1")
+                    redirected = handler.redirect_request(request, None, code, "", {}, target)
+                    self.assertIsNotNone(redirected)
+                    assert redirected is not None
+                    self.assertFalse(any(key.lower() in {"cookie", "cookie2"} for key, _ in redirected.header_items()))
+                    self.assertEqual(redirected.data, b"{}")
+
+    def test_reused_request_gets_new_cookie_after_session_reset(self) -> None:
+        for method in ("GET", "POST"):
+            with self.subTest(method=method):
+                client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+                client._cookie_jar.set_cookie(_session_cookie("old-value"))
+                request = urllib.request.Request(
+                    "https://webvpn.fudan.edu.cn/api/holes",
+                    data=b"{}" if method == "POST" else None,
+                    method=method,
+                )
+                request.add_header("Cookie2", "$Version=1")
+                observed: list[str | None] = []
+                opener = MagicMock()
+
+                def open_with_real_cookie_jar(req, timeout):
+                    client._cookie_jar.add_cookie_header(req)
+                    observed.append(req.get_header("Cookie"))
+                    self.assertIsNone(req.get_header("Cookie2"))
+                    response = MagicMock()
+                    response.__enter__.return_value = response
+                    response.read.return_value = b'{"ok": true}'
+                    response.geturl.return_value = req.full_url
+                    return response
+
+                opener.open.side_effect = open_with_real_cookie_jar
+                client._attempt_open_with_retries(opener, request, 10)
+                client.reset_session()
+                client._cookie_jar.set_cookie(_session_cookie("fresh-value"))
+                # Posting, token recovery and GET recovery reuse this Request.
+                client._attempt_open_with_retries(opener, request, 10)
+
+                self.assertEqual(observed, ["wengine_vpn_ticket=old-value", "wengine_vpn_ticket=fresh-value"])
+
+    def test_get_retry_uses_cookie_updated_by_previous_attempt(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        client._cookie_jar.set_cookie(_session_cookie("old-value"))
+        request = urllib.request.Request("https://webvpn.fudan.edu.cn/api/holes")
+        observed: list[str | None] = []
+        opener = MagicMock()
+
+        def open_with_real_cookie_jar(req, timeout):
+            client._cookie_jar.add_cookie_header(req)
+            observed.append(req.get_header("Cookie"))
+            if len(observed) == 1:
+                client._cookie_jar.set_cookie(_session_cookie("fresh-value"))
+                raise TimeoutError("read timeout after session cookie changed")
+            response = MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = b'{"ok": true}'
+            response.geturl.return_value = req.full_url
+            return response
+
+        opener.open.side_effect = open_with_real_cookie_jar
+        with patch("danxi_daily.webvpn.time.sleep"):
+            client._attempt_open_with_retries(opener, request, 10)
+
+        self.assertEqual(observed, ["wengine_vpn_ticket=old-value", "wengine_vpn_ticket=fresh-value"])
 
     def test_candidate_email_variants(self) -> None:
         client = WebVPNClient(WebVPNCredentials(username="24307100036", password="x"), allowed_hosts={"forum.fduhole.com"})
@@ -310,11 +404,43 @@ class WebvpnTokenTests(unittest.TestCase):
 
     def test_cas_accepts_authenticated_portal_with_generic_title(self) -> None:
         client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
-        with patch.object(client, "_open", return_value=("<html><title>资源访问控制系统</title>Applications</html>", "https://webvpn.fudan.edu.cn/")) as opened:
+        with patch.object(client, "_open", return_value=(_AUTHENTICATED_PORTAL_HTML, "https://webvpn.fudan.edu.cn/")) as opened:
             client._ensure_authenticated_via_cas()
 
         self.assertTrue(client._authenticated)
         opened.assert_called_once()
+
+    def test_cas_ticket_returning_observed_portal_establishes_session(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="uid", password="pwd"))
+        responses = [
+            ("", "https://id.fudan.edu.cn/login#/auth?lck=secret&entityId=webvpn"),
+            ("ticket page", "https://id.fudan.edu.cn/idp/authCenter/authnEngine"),
+            (_AUTHENTICATED_PORTAL_HTML, "https://webvpn.fudan.edu.cn/"),
+        ]
+        with (
+            patch.object(client, "_open", side_effect=responses),
+            patch.object(client, "_load_auth_chain_code", return_value="chain"),
+            patch.object(client, "_load_public_key", return_value=object()),
+            patch.object(client, "_encrypt_password", return_value="encrypted"),
+            patch.object(client, "_execute_cas_auth", return_value="login-token"),
+            patch.object(client, "_extract_target_url_with_ticket", return_value="https://webvpn.fudan.edu.cn/login?cas_login=true&ticket=secret"),
+        ):
+            client._ensure_authenticated_via_cas()
+
+        self.assertTrue(client._authenticated)
+
+    def test_portal_is_successful_login_but_not_an_api_response(self) -> None:
+        self.assertFalse(is_webvpn_login_response(_AUTHENTICATED_PORTAL_HTML, "https://webvpn.fudan.edu.cn/"))
+        self.assertTrue(is_webvpn_api_bounce(_AUTHENTICATED_PORTAL_HTML, "https://webvpn.fudan.edu.cn/"))
+        self.assertFalse(is_webvpn_api_bounce('{"id": 123}', "https://webvpn.fudan.edu.cn/"))
+
+    def test_actual_password_input_and_meta_login_redirect_are_detected(self) -> None:
+        for body in (
+            '<html><input type="password" name="secret"></html>',
+            '<html><meta http-equiv="refresh" content="0; url=/login?cas_login=true"></html>',
+        ):
+            with self.subTest(body=body):
+                self.assertTrue(is_webvpn_login_response(body, "https://webvpn.fudan.edu.cn/"))
 
     def test_json_containing_login_html_is_not_a_gateway_login_response(self) -> None:
         body = json.dumps({"id": 123, "content": '<html><form action="/do-login">password</form></html>'})
@@ -402,6 +528,22 @@ class WebvpnTokenTests(unittest.TestCase):
         reset.assert_called_once()
         emails = [json.loads(call.args[0].data)["email"] for call in opened.call_args_list]
         self.assertEqual(emails, ["student@m.fudan.edu.cn", "student@m.fudan.edu.cn"])
+
+    def test_token_request_recovers_when_gateway_bounces_to_portal(self) -> None:
+        client = WebVPNClient(WebVPNCredentials(username="student", password="password"))
+        with (
+            patch.object(client, "_ensure_authenticated"),
+            patch.object(client, "reset_session", wraps=client.reset_session) as reset,
+            patch.object(client, "_open_following_post_redirects", side_effect=[
+                (_AUTHENTICATED_PORTAL_HTML, "https://webvpn.fudan.edu.cn/"),
+                ('{"access": "new-token"}', "https://webvpn.fudan.edu.cn/mock"),
+            ]) as opened,
+        ):
+            token = client.obtain_forum_api_token()
+
+        self.assertEqual(token, "new-token")
+        self.assertEqual(opened.call_count, 2)
+        reset.assert_called_once()
 
     def test_token_request_repeated_login_page_stops_after_one_recovery(self) -> None:
         client = WebVPNClient(WebVPNCredentials(username="student", password="password"))

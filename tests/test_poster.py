@@ -98,6 +98,17 @@ class PosterWebvpnSessionExpiryTests(unittest.TestCase):
         self.assertEqual(client._open.call_count, 1)
         client.reset_session.assert_not_called()
 
+    def test_post_bounced_to_gateway_portal_recovers_once(self) -> None:
+        client = self._make_client()
+        client._open.side_effect = [
+            ('<html><title>资源访问控制系统 - 资源站点</title></html>', f"https://{WEBVPN_HOST}/"),
+            ('{"hole_id":123}', "https://webvpn.fudan.edu.cn/https/xxx/api/holes"),
+        ]
+        status, _ = post_markdown("https://forum.fduhole.com/api/holes", "t", "hello", webvpn_client=client)
+        self.assertEqual(status, 200)
+        self.assertEqual(client._open.call_count, 2)
+        client.reset_session.assert_called_once()
+
     def test_forum_401_remains_distinct_from_webvpn_session_failure(self) -> None:
         client = self._make_client()
         client._open.side_effect = urllib.error.HTTPError(

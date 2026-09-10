@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from http.cookiejar import CookieJar
+from html.parser import HTMLParser
 from typing import Any
 
 from danxi_daily.security import safe_error_message
@@ -89,11 +90,13 @@ class _PreserveMethodRedirectHandler(urllib.request.HTTPRedirectHandler):
         old_origin: tuple[str, str, int | None],
         new_origin: tuple[str, str, int | None],
     ) -> dict[str, str]:
-        if old_origin == new_origin:
-            return headers
         sanitized = dict(headers)
         for key in list(sanitized.keys()):
-            if key.lower() == "authorization":
+            # CookieJar must select fresh cookies for the redirect target,
+            # including after a same-host response replaced a session cookie.
+            if key.lower() in {"cookie", "cookie2"} or (
+                old_origin != new_origin and key.lower() == "authorization"
+            ):
                 sanitized.pop(key, None)
         return sanitized
 
@@ -181,25 +184,67 @@ def _json_headers(token: str | None) -> dict[str, str]:
     return headers
 
 
-def is_webvpn_login_response(body: str, final_url: str) -> bool:
-    """Recognize a gateway/CAS login response without logging its URL or HTML."""
-    parsed = urllib.parse.urlparse(final_url)
+def _is_login_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").lower()
     if host == _ID_HOST:
         return True
     if host == WEBVPN_HOST and parsed.path.rstrip("/") in {"/login", "/do-login"}:
         return True
-    lowered = body.lstrip("\ufeff \t\r\n")[:32768].lower()
-    if not lowered.startswith(("<html", "<!doctype html")):
+    return False
+
+
+def _is_html_document(body: str) -> bool:
+    return body.lstrip("\ufeff \t\r\n").lower().startswith(("<html", "<!doctype html"))
+
+
+class _LoginPageParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.is_login = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        fields = {name.lower(): (value or "") for name, value in attrs}
+        if tag == "input" and (
+            fields.get("type", "").lower() == "password"
+            or fields.get("name", "").lower() in {"password", "passwd", "pwd"}
+        ):
+            self.is_login = True
+        elif tag == "form" and fields.get("action"):
+            self.is_login |= _is_login_url(urllib.parse.urljoin(self.base_url, fields["action"]))
+        elif tag == "meta" and fields.get("http-equiv", "").lower() == "refresh":
+            match = re.search(r"(?i)\burl\s*=\s*['\"]?([^'\"]+)", fields.get("content", ""))
+            if match:
+                self.is_login |= _is_login_url(urllib.parse.urljoin(self.base_url, match.group(1).strip()))
+
+
+def is_webvpn_login_response(body: str, final_url: str) -> bool:
+    """Recognize real login controls, not the portal's embedded login scripts."""
+    if _is_login_url(final_url):
+        return True
+    if not _is_html_document(body):
         return False
-    # The portal itself can use the same title as its login page. Require a
-    # login control or redirect marker as well, rather than matching the title.
-    return (
-        "cas_login" in lowered
-        or "/do-login" in lowered
-        or ("资源访问控制系统" in lowered and "password" in lowered)
-        or ("id.fudan.edu.cn" in lowered and ("login" in lowered or "authn" in lowered))
-    )
+    parser = _LoginPageParser(final_url)
+    parser.feed(body)
+    return parser.is_login
+
+
+def is_webvpn_api_bounce(body: str, final_url: str) -> bool:
+    """An API request landed on a gateway page instead of its JSON endpoint."""
+    if is_webvpn_login_response(body, final_url):
+        return True
+    parsed = urllib.parse.urlparse(final_url)
+    return parsed.hostname == WEBVPN_HOST and parsed.path in {"", "/"} and _is_html_document(body)
+
+
+def _clear_request_cookies(request: urllib.request.Request) -> None:
+    # urllib mutates Request by adding Cookie as an unredirected header. A
+    # reused Request would otherwise keep its pre-login cookie across resets.
+    for headers in (request.headers, request.unredirected_hdrs):
+        for key in list(headers):
+            if key.lower() in {"cookie", "cookie2"}:
+                headers.pop(key, None)
 
 
 class WebVPNClient:
@@ -252,6 +297,8 @@ class WebVPNClient:
         attempts = self.max_retries if method in {"GET", "HEAD"} else 1
         for attempt in range(attempts):
             try:
+                if isinstance(request, urllib.request.Request):
+                    _clear_request_cookies(request)
                 with opener.open(request, timeout=current_timeout) as resp:
                     body = resp.read().decode("utf-8", errors="replace")
                     final_url = resp.geturl()
@@ -589,7 +636,7 @@ class WebVPNClient:
 
             try:
                 body, final_url = self._open_following_post_redirects(req, timeout=max(self.timeout, 30))
-                if is_webvpn_login_response(body, final_url):
+                if is_webvpn_api_bounce(body, final_url):
                     if recovered_session:
                         raise WebVPNAuthError("forum token request still returned a login page after WebVPN re-authentication")
                     recovered_session = True
@@ -598,7 +645,7 @@ class WebVPNClient:
                     # The gateway login response confirms this did not reach
                     # the forum login endpoint. Retry the same email once.
                     body, final_url = self._open_following_post_redirects(req, timeout=max(self.timeout, 30))
-                    if is_webvpn_login_response(body, final_url):
+                    if is_webvpn_api_bounce(body, final_url):
                         self._authenticated = False
                         raise WebVPNAuthError("forum token request still returned a login page after WebVPN re-authentication")
                 data = json.loads(body)
@@ -671,7 +718,7 @@ class WebVPNClient:
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 raise WebVPNError(f"webvpn request failed: {self._safe_error_detail(exc)}") from exc
 
-            if is_webvpn_login_response(payload, final_url):
+            if is_webvpn_api_bounce(payload, final_url):
                 self.reset_session()
                 if attempt == 0:
                     continue

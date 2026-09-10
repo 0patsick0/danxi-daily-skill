@@ -153,10 +153,12 @@ Safety behavior:
 
 Authentication recovery and delivery failures:
 - WebVPN login redirects trigger one session renewal. CAS login must finish on a valid WebVPN landing page.
+- Reused requests rebuild their Cookie headers from the current session, including after login and redirects.
 - A forum HTTP 401 during publishing refreshes the forum token once and retries the already generated report within the posting window.
 - Failed or unconfirmed publishing exits with an error and leaves dedupe state unchanged. The generated report remains available in Actions artifacts.
 - Publishing timeouts and server errors are not automatically replayed within a run, since delivery may already have happened.
 - Use the workflow's `dry_run=true` input to verify authentication and report generation without publishing. Dry-run failures do not create issue notifications.
+- For a single login diagnostic, use `auth_check=true`. It prints page/redirect structure without credential, ticket or cookie values, and never generates or posts a report.
 
 ## Tests
 

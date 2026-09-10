@@ -58,7 +58,7 @@ def post_markdown(
     
     if webvpn_client:
         # Proxy through WebVPN
-        from danxi_daily.webvpn import WebVPNAuthError, is_webvpn_login_response, translate_to_webvpn
+        from danxi_daily.webvpn import WebVPNAuthError, is_webvpn_api_bounce, translate_to_webvpn
         proxied_url = translate_to_webvpn(endpoint, allowed_hosts=webvpn_client.allowed_hosts)
         if not proxied_url:
             raise ValueError(f"post endpoint {endpoint} is not supported by webvpn")
@@ -85,7 +85,7 @@ def post_markdown(
             authenticate()
             body, final_url = webvpn_client._open(req, timeout=timeout)
 
-            if is_webvpn_login_response(body, final_url):
+            if is_webvpn_api_bounce(body, final_url):
                 reset_session = getattr(webvpn_client, "reset_session", None)
                 if callable(reset_session):
                     reset_session()
@@ -93,7 +93,7 @@ def post_markdown(
                     webvpn_client._authenticated = False
                 authenticate()
                 body, final_url = webvpn_client._open(req, timeout=timeout)
-                if is_webvpn_login_response(body, final_url):
+                if is_webvpn_api_bounce(body, final_url):
                     raise WebVPNAuthError("WebVPN session expired and re-authentication failed")
 
             # A proxy HTML page is not confirmation that the forum accepted the
